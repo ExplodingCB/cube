@@ -3,324 +3,320 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>cube</title>
+  <title>CSS 3D Cube</title>
   <style>
-    body {
+    html, body {
+      height: 100%;
       margin: 0;
       padding: 0;
       overflow: hidden;
       background-color: black;
     }
-    canvas {
-      display: block;
+
+    .scene {
       width: 100vw;
       height: 100vh;
-      background-color: black;
+      perspective: 1000px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .cube {
+      width: min(30vw, 30vh);
+      height: min(30vw, 30vh);
+      position: relative;
+      transform-style: preserve-3d;
+      transition: transform 0.1s ease;
+    }
+
+    .cube:hover {
+      animation-play-state: paused;
+    }
+
+    .face {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      opacity: 0.75;
+      border: 2px solid white;
+      display: flex;
+      box-sizing: border-box;
+    }
+
+    .front {
+      background: rgba(0, 255, 0, 0.5);
+      transform: translateZ(calc(min(15vw, 15vh)));
+    }
+
+    .back {
+      background: rgba(255, 0, 0, 0.5);
+      transform: rotateY(180deg) translateZ(calc(min(15vw, 15vh)));
+    }
+
+    .right {
+      background: rgba(0, 255, 255, 0.5);
+      transform: rotateY(90deg) translateZ(calc(min(15vw, 15vh)));
+    }
+
+    .left {
+      background: rgba(255, 255, 0, 0.5);
+      transform: rotateY(-90deg) translateZ(calc(min(15vw, 15vh)));
+    }
+
+    .top {
+      background: rgba(255, 255, 255, 0.5);
+      transform: rotateX(90deg) translateZ(calc(min(15vw, 15vh)));
+    }
+
+    .bottom {
+      background: rgba(0, 0, 255, 0.5);
+      transform: rotateX(-90deg) translateZ(calc(min(15vw, 15vh)));
+    }
+
+    /* We're not using keyframe animation anymore */
+
+    /* Add responsive hover control */
+    @media (hover: hover) {
+      .scene:hover .cube {
+        animation-play-state: paused;
+      }
+    }
+
+    /* Allow user to control cube with mouse */
+    .controls {
+      position: fixed;
+      bottom: 10px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      color: white;
+      font-family: Arial, sans-serif;
+      pointer-events: none;
     }
   </style>
 </head>
 <body>
-  <canvas id="gameCanvas"></canvas>
+  <div class="scene">
+    <div class="cube">
+      <div class="face front"></div>
+      <div class="face back"></div>
+      <div class="face right"></div>
+      <div class="face left"></div>
+      <div class="face top"></div>
+      <div class="face bottom"></div>
+    </div>
+  </div>
 
   <script>
-    // Set up canvas
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
-    
-    // Set canvas dimensions to fill the window
-    function resizeCanvas() {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    }
-    
-    // Call once to initialize
-    resizeCanvas();
-    
-    // Update canvas size when window is resized
-    window.addEventListener('resize', resizeCanvas);
-    
-    // These will be updated on each frame
-    let WIDTH = canvas.width;
-    let HEIGHT = canvas.height;
-
-    // Colors
-    const BLACK = "rgb(0, 0, 0)";
-    const WHITE = "rgb(255, 255, 255)";
-    const RED = "rgb(255, 0, 0)";
-    const GREEN = "rgb(0, 255, 0)";
-    const BLUE = "rgb(0, 0, 255)";
-    const YELLOW = "rgb(255, 255, 0)";
-    const CYAN = "rgb(0, 255, 255)";
-
-    // Define the vertices of a cube in 3D space
-    // Each vertex is represented as (x, y, z)
-    const vertices = [
-      [-1, -1, -1],  // 0: back bottom left
-      [1, -1, -1],   // 1: back bottom right
-      [1, 1, -1],    // 2: back top right
-      [-1, 1, -1],   // 3: back top left
-      [-1, -1, 1],   // 4: front bottom left
-      [1, -1, 1],    // 5: front bottom right
-      [1, 1, 1],     // 6: front top right
-      [-1, 1, 1]     // 7: front top left
-    ];
-
-    // Define the edges of the cube by connecting vertices
-    const edges = [
-      [0, 1], [1, 2], [2, 3], [3, 0],  // Back face
-      [4, 5], [5, 6], [6, 7], [7, 4],  // Front face
-      [0, 4], [1, 5], [2, 6], [3, 7]   // Connecting edges
-    ];
-
-    // Define the faces of the cube
-    const faces = [
-      [0, 1, 2, 3],  // Back face
-      [4, 5, 6, 7],  // Front face
-      [0, 1, 5, 4],  // Bottom face
-      [2, 3, 7, 6],  // Top face
-      [0, 3, 7, 4],  // Left face
-      [1, 2, 6, 5]   // Right face
-    ];
-
-    // Colors for each face
-    const faceColors = [
-      RED,     // Back
-      GREEN,   // Front
-      BLUE,    // Bottom
-      WHITE,   // Top
-      YELLOW,  // Left
-      CYAN     // Right
-    ];
-
-    // Scale factor (size of the cube) - will be calculated dynamically
-    let scale;
-    
-    // Translation to center of screen - will be updated each frame
-    let centerX, centerY;
-
-    // Initial rotation angles
-    let angleX = 0;
-    let angleY = 0;
-    let angleZ = 0;
-
-    // Auto-spin rotation speeds (slow random rotation)
-    let autoRotationX = randomFloat(0.002, 0.005) * randomChoice([-1, 1]);
-    let autoRotationY = randomFloat(0.002, 0.005) * randomChoice([-1, 1]);
-    let autoRotationZ = randomFloat(0.001, 0.003) * randomChoice([-1, 1]);
-
-    // Mouse control variables
-    let dragging = false;
-    let lastMousePos = null;
-    let lastInteractionTime = Date.now();
-    let autoSpinMode = false;
-    const inactivityTimeout = 3000;  // 3 seconds of inactivity before auto-spin
-
-    // Function to perform 3D rotation and projection
-    function rotateAndProject(vertex, angleX, angleY, angleZ) {
-      // Rotate around X-axis
-      let x = vertex[0];
-      let y = vertex[1] * Math.cos(angleX) - vertex[2] * Math.sin(angleX);
-      let z = vertex[1] * Math.sin(angleX) + vertex[2] * Math.cos(angleX);
-
-      // Rotate around Y-axis
-      let x2 = x * Math.cos(angleY) + z * Math.sin(angleY);
-      let y2 = y;
-      let z2 = -x * Math.sin(angleY) + z * Math.cos(angleY);
-
-      // Rotate around Z-axis
-      let x3 = x2 * Math.cos(angleZ) - y2 * Math.sin(angleZ);
-      let y3 = x2 * Math.sin(angleZ) + y2 * Math.cos(angleZ);
-      let z3 = z2;
-
-      // Perspective projection
-      const distance = 4;  // Viewing distance from the camera
-      if (z3 + distance !== 0) {
-        const f = 200 / (z3 + distance);  // Perspective factor
-        x3 *= f;
-        y3 *= f;
-      }
-
-      // Scale and translate to the center of the screen
-      x3 = x3 * scale + centerX;
-      y3 = y3 * scale + centerY;
-
-      return [x3, y3, z3];
-    }
-
-    // Function to update the last interaction time
-    function updateInteractionTime() {
-      lastInteractionTime = Date.now();
-      autoSpinMode = false;
-    }
-
-    // Helper function to get a random float in a range
-    function randomFloat(min, max) {
-      return Math.random() * (max - min) + min;
-    }
-
-    // Helper function to randomly choose from an array
-    function randomChoice(arr) {
-      return arr[Math.floor(Math.random() * arr.length)];
-    }
-
-    // Event listeners for mouse control
-    canvas.addEventListener('mousedown', (event) => {
-      if (event.button === 0) {  // Left mouse button
-        dragging = true;
-        lastMousePos = [event.clientX, event.clientY];
-        updateInteractionTime();
-      }
-    });
-
-    canvas.addEventListener('mouseup', (event) => {
-      if (event.button === 0) {  // Left mouse button
-        dragging = false;
-        updateInteractionTime();
-      }
-    });
-
-    canvas.addEventListener('mousemove', (event) => {
-      if (dragging && lastMousePos) {
-        // Calculate mouse movement
-        const dx = event.clientX - lastMousePos[0];
-        const dy = event.clientY - lastMousePos[1];
-        
-        // Convert mouse movement to rotation angles (scale down for better control)
-        angleY += dx * 0.01;
-        angleX += dy * 0.01;
-        
-        lastMousePos = [event.clientX, event.clientY];
-        updateInteractionTime();
-      }
-    });
-    
-    // Handle touch events for mobile
-    canvas.addEventListener('touchstart', (event) => {
-      if (event.touches.length === 1) {
-        dragging = true;
-        lastMousePos = [event.touches[0].clientX, event.touches[0].clientY];
-        updateInteractionTime();
-        event.preventDefault();
-      }
-    });
-    
-    canvas.addEventListener('touchend', () => {
-      dragging = false;
-      updateInteractionTime();
-    });
-    
-    canvas.addEventListener('touchmove', (event) => {
-      if (dragging && lastMousePos && event.touches.length === 1) {
-        // Calculate touch movement
-        const dx = event.touches[0].clientX - lastMousePos[0];
-        const dy = event.touches[0].clientY - lastMousePos[1];
-        
-        // Convert touch movement to rotation angles
-        angleY += dx * 0.01;
-        angleX += dy * 0.01;
-        
-        lastMousePos = [event.touches[0].clientX, event.touches[0].clientY];
-        updateInteractionTime();
-        event.preventDefault();
-      }
-    });
-
-    // Function to draw the cube
-    function drawCube() {
-      // Update dimensions in case of resize
-      WIDTH = canvas.width;
-      HEIGHT = canvas.height;
+    document.addEventListener('DOMContentLoaded', function() {
+      const cube = document.querySelector('.cube');
+      let isDragging = false;
+      let previousMousePosition = { x: 0, y: 0 };
+      let rotationX = 0;
+      let rotationY = 0;
+      let rotationZ = 0;
+      let autoRotate = true;
+      let lastInteractionTime = Date.now();
+      const inactivityTimeout = 3000; // 3 seconds until auto-rotation resumes
       
-      // Update center position
-      centerX = WIDTH / 2;
-      centerY = HEIGHT / 2;
+      // Momentum variables
+      let momentumX = 0;
+      let momentumY = 0;
+      let dragSpeed = { x: 0, y: 0 };
+      const friction = 0.95; // Higher value = less friction
+      const momentumThreshold = 0.1; // Minimum momentum to continue spinning
       
-      // Calculate scale based on window size (responsive)
-      scale = Math.min(WIDTH, HEIGHT) / 300;
+      // Auto-rotation speeds (degrees per frame)
+      let autoRotationSpeedX = 0.1;
+      let autoRotationSpeedY = 0.2;
+      let autoRotationSpeedZ = 0.05;
       
-      // Clear the screen
-      ctx.fillStyle = BLACK;
-      ctx.fillRect(0, 0, WIDTH, HEIGHT);
-
-      // Calculate rotated and projected vertices
-      const projectedVertices = vertices.map(v => rotateAndProject(v, angleX, angleY, angleZ));
+      // Initialize
+      updateCubeRotation();
       
-      // Sort faces by depth (simple painter's algorithm for visibility)
-      const faceDepth = faces.map((face, i) => {
-        // Calculate the average z-coordinate of the face
-        const avgZ = face.reduce((sum, vertexIdx) => sum + projectedVertices[vertexIdx][2], 0) / face.length;
-        return { index: i, z: avgZ };
-      });
-      
-      // Sort faces by z-coordinate (distant faces first)
-      faceDepth.sort((a, b) => b.z - a.z);
-      
-      // Draw the faces with simple visibility handling
-      faceDepth.forEach(({ index }) => {
-        const face = faces[index];
-        const color = faceColors[index];
-        
-        // Get 2D points for the face
-        const points = face.map(vertexIdx => 
-          [projectedVertices[vertexIdx][0], projectedVertices[vertexIdx][1]]
-        );
-        
-        // Draw filled face with transparency
-        ctx.fillStyle = color.replace('rgb', 'rgba').replace(')', ', 0.4)');
-        ctx.beginPath();
-        ctx.moveTo(points[0][0], points[0][1]);
-        for (let i = 1; i < points.length; i++) {
-          ctx.lineTo(points[i][0], points[i][1]);
-        }
-        ctx.closePath();
-        ctx.fill();
-        
-        // Draw edges for this face
-        ctx.strokeStyle = WHITE;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        for (let i = 0; i < face.length; i++) {
-          const startIdx = face[i];
-          const endIdx = face[(i + 1) % face.length];
-          const start = [projectedVertices[startIdx][0], projectedVertices[startIdx][1]];
-          const end = [projectedVertices[endIdx][0], projectedVertices[endIdx][1]];
-          
-          if (i === 0) {
-            ctx.moveTo(start[0], start[1]);
+      // Animation frame for smooth rotation
+      function animate() {
+        if (autoRotate) {
+          // Auto-rotation mode
+          rotationX += autoRotationSpeedX;
+          rotationY += autoRotationSpeedY;
+          rotationZ += autoRotationSpeedZ;
+        } else {
+          // Momentum-based rotation after user interaction
+          if (Math.abs(momentumX) > momentumThreshold || Math.abs(momentumY) > momentumThreshold) {
+            rotationX += momentumY;
+            rotationY += momentumX;
+            
+            // Apply friction to slow down
+            momentumX *= friction;
+            momentumY *= friction;
+            
+            // Reset the last interaction time while momentum is still active
+            if (Math.abs(momentumX) > 0.5 || Math.abs(momentumY) > 0.5) {
+              lastInteractionTime = Date.now();
+            }
           }
-          ctx.lineTo(end[0], end[1]);
         }
-        ctx.closePath();
-        ctx.stroke();
+        
+        updateCubeRotation();
+        requestAnimationFrame(animate);
+      }
+      
+      // Start animation loop
+      animate();
+
+      // Auto rotation check interval
+      setInterval(() => {
+        if (!autoRotate && Date.now() - lastInteractionTime > inactivityTimeout) {
+          // Transfer any remaining momentum to initial auto-rotation speed
+          const speedFactor = 0.1;
+          autoRotationSpeedX = 0.1 + Math.abs(momentumY) * speedFactor;
+          autoRotationSpeedY = 0.2 + Math.abs(momentumX) * speedFactor;
+          
+          autoRotate = true;
+          momentumX = 0;
+          momentumY = 0;
+        }
+      }, 100);
+
+      // Function to update cube rotation based on current values
+      function updateCubeRotation() {
+        cube.style.transform = `rotateX(${rotationX}deg) rotateY(${rotationY}deg) rotateZ(${rotationZ}deg)`;
+      }
+
+      // Track speed over time for momentum
+      function updateDragSpeed(x, y) {
+        dragSpeed = { x, y };
+      }
+
+      // Handle mouse events for dragging
+      document.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        previousMousePosition = { x: e.clientX, y: e.clientY };
+        
+        // Stop momentum and auto-rotation
+        momentumX = 0;
+        momentumY = 0;
+        autoRotate = false;
+        
+        // Reset drag speed
+        dragSpeed = { x: 0, y: 0 };
+        
+        lastInteractionTime = Date.now();
       });
-    }
 
-    // Main game loop
-    function gameLoop() {
-      const currentTime = Date.now();
+      document.addEventListener('mouseup', (e) => {
+        if (isDragging) {
+          // Transfer drag speed to momentum on release
+          momentumX = dragSpeed.x * 0.2; // Scale factor controls "throw" force
+          momentumY = dragSpeed.y * 0.2;
+        }
+        
+        isDragging = false;
+        lastInteractionTime = Date.now();
+      });
+
+      // Track previous positions and timestamps for velocity calculation
+      let lastPos = { x: 0, y: 0, time: 0 };
       
-      // Check if we should switch to auto-spin mode
-      if (!autoSpinMode && currentTime - lastInteractionTime > inactivityTimeout) {
-        autoSpinMode = true;
-        // Generate new random rotation speeds when entering auto-spin mode
-        autoRotationX = randomFloat(0.002, 0.005) * randomChoice([-1, 1]);
-        autoRotationY = randomFloat(0.002, 0.005) * randomChoice([-1, 1]);
-        autoRotationZ = randomFloat(0.001, 0.003) * randomChoice([-1, 1]);
-      }
-      
-      // Auto-spin mode rotation
-      if (autoSpinMode) {
-        angleX += autoRotationX;
-        angleY += autoRotationY;
-        angleZ += autoRotationZ;
-      }
+      document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        
+        const currentTime = Date.now();
+        const deltaMove = {
+          x: e.clientX - previousMousePosition.x,
+          y: e.clientY - previousMousePosition.y
+        };
 
-      drawCube();
-      requestAnimationFrame(gameLoop);
-    }
+        // Calculate instantaneous velocity
+        if (lastPos.time > 0) {
+          const dt = currentTime - lastPos.time;
+          if (dt > 0) {
+            const speedX = (e.clientX - lastPos.x) / dt * 10; // Scale up for better feel
+            const speedY = (e.clientY - lastPos.y) / dt * 10;
+            updateDragSpeed(speedX, -speedY); // Invert Y for correct rotation direction
+          }
+        }
+        
+        // Save position for next velocity calculation
+        lastPos = { x: e.clientX, y: e.clientY, time: currentTime };
+        
+        // Update rotation based on mouse movement
+        rotationX -= deltaMove.y * 0.5; // Reversed for natural feel
+        rotationY += deltaMove.x * 0.5;
+        
+        updateCubeRotation();
+        previousMousePosition = { x: e.clientX, y: e.clientY };
+        lastInteractionTime = Date.now();
+      });
 
-    // Start the game loop
-    gameLoop();
+      // Handle touch events for mobile
+      document.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1) {
+          isDragging = true;
+          previousMousePosition = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+          
+          // Stop momentum and auto-rotation
+          momentumX = 0;
+          momentumY = 0;
+          autoRotate = false;
+          
+          // Reset drag speed
+          dragSpeed = { x: 0, y: 0 };
+          lastPos = { x: 0, y: 0, time: 0 };
+          
+          lastInteractionTime = Date.now();
+        }
+      });
+
+      document.addEventListener('touchend', (e) => {
+        if (isDragging) {
+          // Transfer drag speed to momentum on release
+          momentumX = dragSpeed.x * 0.2; // Scale factor controls "throw" force
+          momentumY = dragSpeed.y * 0.2;
+        }
+        
+        isDragging = false;
+        lastInteractionTime = Date.now();
+      });
+
+      document.addEventListener('touchmove', (e) => {
+        if (!isDragging || e.touches.length !== 1) return;
+        
+        const touch = e.touches[0];
+        const currentTime = Date.now();
+        const deltaMove = {
+          x: touch.clientX - previousMousePosition.x,
+          y: touch.clientY - previousMousePosition.y
+        };
+
+        // Calculate instantaneous velocity
+        if (lastPos.time > 0) {
+          const dt = currentTime - lastPos.time;
+          if (dt > 0) {
+            const speedX = (touch.clientX - lastPos.x) / dt * 10; // Scale up for better feel
+            const speedY = (touch.clientY - lastPos.y) / dt * 10;
+            updateDragSpeed(speedX, -speedY); // Invert Y for correct rotation direction
+          }
+        }
+        
+        // Save position for next velocity calculation
+        lastPos = { x: touch.clientX, y: touch.clientY, time: currentTime };
+
+        // Update rotation based on touch movement
+        rotationX -= deltaMove.y * 0.5; // Reversed for natural feel
+        rotationY += deltaMove.x * 0.5;
+        
+        updateCubeRotation();
+        previousMousePosition = { x: touch.clientX, y: touch.clientY };
+        lastInteractionTime = Date.now();
+        
+        // Prevent scrolling while dragging
+        e.preventDefault();
+      });
+    });
   </script>
+
 </body>
 </html>
