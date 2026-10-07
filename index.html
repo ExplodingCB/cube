@@ -69,8 +69,101 @@
     }
 
     .shape-button[hidden],
-    .selector-divider[hidden] {
+    .selector-divider[hidden],
+    .shape-selector[hidden],
+    .make-bar[hidden] {
       display: none;
+    }
+
+    .shape-selector:not([hidden]),
+    .make-bar:not([hidden]) {
+      animation: rise 0.35s ease;
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translate(-50%, 12px); }
+      to   { opacity: 1; transform: translate(-50%, 0); }
+    }
+
+    /* Clay toolbar: swatches, then Start over and Done */
+    .make-bar {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 16px 14px 22px;
+      border-radius: 50px;
+      z-index: 100;
+      background: rgba(30, 30, 30, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", sans-serif;
+    }
+
+    .swatches {
+      display: flex;
+      gap: 12px;
+    }
+
+    .swatch {
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.55), transparent 55%), var(--clay);
+      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .swatch:hover {
+      transform: scale(1.12);
+    }
+
+    .swatch[aria-checked="true"] {
+      box-shadow: 0 0 0 2px rgba(30, 30, 30, 1), 0 0 0 4px rgba(255, 255, 255, 0.9);
+    }
+
+    .text-button {
+      border: none;
+      border-radius: 999px;
+      padding: 9px 16px;
+      font: inherit;
+      font-size: 14px;
+      cursor: pointer;
+      color: rgba(255, 255, 255, 0.75);
+      background: transparent;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+
+    .text-button:hover {
+      color: white;
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .text-button.primary {
+      color: #111;
+      background: white;
+      font-weight: 600;
+      padding-inline: 20px;
+    }
+
+    .text-button.primary:hover {
+      background: rgba(255, 255, 255, 0.85);
+    }
+
+    .swatch:focus-visible,
+    .text-button:focus-visible {
+      outline: 2px solid rgba(255, 255, 255, 0.8);
+      outline-offset: 3px;
+    }
+
+    body.over-clay #stage {
+      cursor: none;
     }
 
     .selector-divider {
@@ -198,6 +291,19 @@
         <path d="M12,2L3,7V17L12,22L21,17V7Z M12,8L8.4,10V14L12,16L15.6,14V10Z M12,2V8 M21,7L15.6,10 M21,17L15.6,14 M12,22V16 M3,17L8.4,14 M3,7L8.4,10" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="0.4" stroke-linejoin="round" />
       </svg>
     </button>
+    <button type="button" class="shape-button" data-shape="clay" aria-label="Your shape" aria-pressed="false" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12.2,3.1C15.4,2.9 17.6,5.2 19.6,7.6C21.6,10 21,13.6 19.4,16.2C17.6,19.2 14.6,21 11.4,20.8C8,20.6 4.6,18.6 3.6,15C2.6,11.6 4.4,8.6 6.6,6.2C8.2,4.4 9.9,3.2 12.2,3.1Z" fill="url(#g-sphere)" />
+        <path d="M12.2,3.1C15.4,2.9 17.6,5.2 19.6,7.6C21.6,10 21,13.6 19.4,16.2C17.6,19.2 14.6,21 11.4,20.8C8,20.6 4.6,18.6 3.6,15C2.6,11.6 4.4,8.6 6.6,6.2C8.2,4.4 9.9,3.2 12.2,3.1Z" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="0.4" />
+      </svg>
+    </button>
+    <span class="selector-divider" id="make-divider" hidden></span>
+    <button type="button" class="shape-button" id="make-button" aria-label="Make your own shape" title="Make your own shape" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="10.4" y="4" width="3.2" height="16" rx="1.6" fill="url(#g-light)" />
+        <rect x="4" y="10.4" width="16" height="3.2" rx="1.6" fill="url(#g-light)" />
+      </svg>
+    </button>
     <span class="selector-divider" id="tilt-divider" hidden></span>
     <button type="button" class="shape-button" id="tilt-toggle" aria-label="Tilt to spin" title="Tilt your phone to spin the shape" aria-pressed="false" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -210,6 +316,19 @@
       </svg>
     </button>
   </nav>
+
+  <div class="make-bar" id="make-bar" role="toolbar" aria-label="Shape your clay" hidden>
+    <div class="swatches" role="radiogroup" aria-label="Clay color">
+      <button type="button" class="swatch" role="radio" aria-label="Coral" aria-checked="true" data-rgb="246,140,118" style="--clay: rgb(246, 140, 118)"></button>
+      <button type="button" class="swatch" role="radio" aria-label="Butter" aria-checked="false" data-rgb="245,200,105" style="--clay: rgb(245, 200, 105)"></button>
+      <button type="button" class="swatch" role="radio" aria-label="Mint" aria-checked="false" data-rgb="125,210,165" style="--clay: rgb(125, 210, 165)"></button>
+      <button type="button" class="swatch" role="radio" aria-label="Sky" aria-checked="false" data-rgb="120,175,245" style="--clay: rgb(120, 175, 245)"></button>
+      <button type="button" class="swatch" role="radio" aria-label="Lilac" aria-checked="false" data-rgb="185,155,240" style="--clay: rgb(185, 155, 240)"></button>
+    </div>
+    <span class="selector-divider"></span>
+    <button type="button" class="text-button" id="clay-reset">Start over</button>
+    <button type="button" class="text-button primary" id="clay-done">Done</button>
+  </div>
 
   <script>
     (function () {
@@ -241,8 +360,17 @@
       const pointers = new Map();
 
       window.addEventListener('pointerdown', (e) => {
-        if (e.target.closest('.shape-selector')) return;
-        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        if (e.target.closest('.shape-selector, .make-bar')) return;
+        // In clay mode, the left button on the clay sculpts; right-drag or dragging empty space turns it.
+        if (making && e.button === 0) {
+          const hit = renderer.clayHit(e.clientX, e.clientY);
+          if (hit >= 0) {
+            sculpt = { id: e.pointerId, x: e.clientX, y: e.clientY };
+            renderer.startSculpt(hit);
+            return;
+          }
+        }
+        if (e.pointerType === 'mouse' && e.button !== 0 && !(making && e.button === 2)) return;
         pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         document.body.classList.add('dragging');
         for (const k in momentum) momentum[k] = 0;
@@ -251,6 +379,15 @@
       });
 
       window.addEventListener('pointermove', (e) => {
+        if (sculpt && e.pointerId === sculpt.id) {
+          renderer.sculptMove(e.clientX - sculpt.x, e.clientY - sculpt.y);
+          sculpt.x = e.clientX;
+          sculpt.y = e.clientY;
+          return;
+        }
+        if (making && pointers.size === 0) {
+          document.body.classList.toggle('over-clay', renderer.setHover(e.clientX, e.clientY));
+        }
         const p = pointers.get(e.pointerId);
         if (!p) return;
 
@@ -282,6 +419,11 @@
       });
 
       function endPointer(e) {
+        if (sculpt && e.pointerId === sculpt.id) {
+          sculpt = null;
+          renderer.endSculpt();
+          return;
+        }
         if (!pointers.delete(e.pointerId)) return;
         if (pointers.size > 0) return;
         document.body.classList.remove('dragging');
@@ -291,6 +433,9 @@
       }
       window.addEventListener('pointerup', endPointer);
       window.addEventListener('pointercancel', endPointer);
+      window.addEventListener('contextmenu', (e) => {
+        if (making) e.preventDefault();
+      });
 
       // ---- Scroll-wheel zoom (mouse wheel, or pinch on a trackpad, which arrives as ctrl + wheel) ----
       const ZOOM_MIN = 0.5, ZOOM_MAX = 2.2;
@@ -379,18 +524,93 @@
       }
 
       // ---- Shape selector ----
-      shapeButtons.forEach((button) => {
-        button.addEventListener('click', () => {
-          const name = button.dataset.shape;
-          if (name === currentShape) return;
-          currentShape = name;
-          renderer.morphTo(name, rot, performance.now());
-          shapeButtons.forEach((btn) => {
-            const on = btn === button;
-            btn.classList.toggle('active', on);
-            btn.setAttribute('aria-pressed', on);
-          });
+      function selectShape(name) {
+        if (name !== currentShape) renderer.morphTo(name, rot, performance.now());
+        currentShape = name;
+        shapeButtons.forEach((btn) => {
+          const on = btn.dataset.shape === name;
+          btn.classList.toggle('active', on);
+          btn.setAttribute('aria-pressed', on);
         });
+      }
+      shapeButtons.forEach((button) => {
+        button.addEventListener('click', () => selectShape(button.dataset.shape));
+      });
+
+      // ---- Make your own shape (clay), desktop only ----
+      const CLAY_KEY = 'cube.clay.v1';
+      const selector = document.querySelector('.shape-selector');
+      const makeBar = document.getElementById('make-bar');
+      const makeButton = document.getElementById('make-button');
+      const clayButton = document.querySelector('[data-shape="clay"]');
+      const swatches = makeBar.querySelectorAll('.swatch');
+      let making = false;
+      let sculpt = null;
+
+      try {
+        const saved = JSON.parse(localStorage.getItem(CLAY_KEY));
+        if (saved && renderer.importClay(saved)) clayButton.hidden = false;
+      } catch (err) {
+        // No saved shape, or storage is blocked; start from a fresh ball.
+      }
+      markSwatch(renderer.clayColor());
+
+      if (window.matchMedia('(pointer: fine)').matches) {
+        makeButton.hidden = false;
+        document.getElementById('make-divider').hidden = false;
+      }
+
+      function markSwatch(rgb) {
+        swatches.forEach((sw) => sw.setAttribute('aria-checked', sw.dataset.rgb === rgb.join(',')));
+      }
+
+      function enterMake() {
+        making = true;
+        renderer.setMaking(true);
+        selectShape('clay');
+        for (const k in momentum) momentum[k] = 0;
+        selector.hidden = true;
+        makeBar.hidden = false;
+        makeBar.querySelector('.text-button.primary').focus({ preventScroll: true });
+      }
+
+      function exitMake() {
+        if (!making) return;
+        making = false;
+        sculpt = null;
+        renderer.setMaking(false);
+        document.body.classList.remove('over-clay');
+        try {
+          localStorage.setItem(CLAY_KEY, JSON.stringify(renderer.exportClay()));
+        } catch (err) {
+          // Storage is blocked; the shape still lasts until the page closes.
+        }
+        clayButton.hidden = false;
+        makeBar.hidden = true;
+        selector.hidden = false;
+        selectShape('clay');
+      }
+
+      makeButton.addEventListener('click', enterMake);
+      document.getElementById('clay-done').addEventListener('click', exitMake);
+      document.getElementById('clay-reset').addEventListener('click', () => renderer.resetClay());
+      swatches.forEach((sw) => {
+        sw.addEventListener('click', () => {
+          const rgb = sw.dataset.rgb.split(',').map(Number);
+          renderer.setClayColor(rgb);
+          markSwatch(rgb);
+        });
+      });
+
+      window.addEventListener('keydown', (e) => {
+        if (!making) return;
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+          e.preventDefault();
+          renderer.undoClay();
+        } else if (e.key === 'Enter' || e.key === 'Escape') {
+          e.preventDefault();
+          exitMake();
+        }
       });
 
       // ---- Animation loop ----
@@ -410,7 +630,11 @@
         }
         applyTilt(dt, now);
 
-        // Ease auto-spin back in once the user has left it alone.
+        // Hold still while making a shape; otherwise ease auto-spin back in once the user has left it alone.
+        if (making) {
+          autoBlend = 0;
+          lastInput = now;
+        }
         if (!dragging && now - lastInput > IDLE_BEFORE_AUTO) autoBlend = Math.min(1, autoBlend + dt);
         if (!dragging && now - lastInput4D > IDLE_BEFORE_AUTO) autoBlend4D = Math.min(1, autoBlend4D + dt);
 
@@ -436,12 +660,14 @@
         const MORPH_MS = 1300;
         const MORPH_POINTS = 900;
         const MORPH_STAGGER = 0.3;  // fraction of the morph over which points set off, top to bottom
-        let width = 0, height = 0, unit = 0, dpr = 1, baseLineScale = 1, lineScale = 1;
+        let width = 0, height = 0, unit = 0, dpr = 1, baseLineScale = 1, lineScale = 1, currentZoom = 1;
+        let lastProject = null;
 
         const cube = buildCube();
         const sphereDiscs = buildSphereDiscs();
         const ball = buildBall();
         const tesseract = buildTesseract();
+        const clay = buildClay();
 
         // Each shape's outline as evenly spaced points; morphs move these from one outline to the next.
         const outlines = {
@@ -469,12 +695,14 @@
 
         // Returns a function that applies CSS-style rotateX() rotateY() rotateZ() to a point
         // and writes its perspective-projected screen position into `out`.
+        // The rotation is kept as a row-major 3x3 matrix on `project.m`, so callers can also
+        // rotate normals (m * v) or turn a screen-space move back into model space (transpose).
         function makeProjector(rot) {
           const rx = rot.x * Math.PI / 180, ry = rot.y * Math.PI / 180, rz = rot.z * Math.PI / 180;
           const cx = Math.cos(rx), sx = Math.sin(rx);
           const cy = Math.cos(ry), sy = Math.sin(ry);
           const cz = Math.cos(rz), sz = Math.sin(rz);
-          return function (x, y, z, out) {
+          const rotate = (x, y, z) => {
             let t = x * cz - y * sz;
             y = x * sz + y * cz;
             x = t;
@@ -484,14 +712,23 @@
             t = y * cx - z * sx;
             z = y * sx + z * cx;
             y = t;
+            return [x, y, z];
+          };
+          const c0 = rotate(1, 0, 0), c1 = rotate(0, 1, 0), c2 = rotate(0, 0, 1);
+          const m = [c0[0], c1[0], c2[0], c0[1], c1[1], c2[1], c0[2], c1[2], c2[2]];
 
-            const Z = z * unit;
+          function project(x, y, z, out) {
+            const X = m[0] * x + m[1] * y + m[2] * z;
+            const Y = m[3] * x + m[4] * y + m[5] * z;
+            const Z = (m[6] * x + m[7] * y + m[8] * z) * unit;
             const f = PERSPECTIVE / (PERSPECTIVE - Z);
-            out.x = width / 2 + x * unit * f;
-            out.y = height / 2 + y * unit * f;
+            out.x = width / 2 + X * unit * f;
+            out.y = height / 2 + Y * unit * f;
             out.z = Z;
             out.f = f;
-          };
+          }
+          project.m = m;
+          return project;
         }
 
         // Rotates a tesseract point in the XW and YW planes, then projects it from 4D to 3D:
@@ -514,6 +751,7 @@
         }
 
         function outlineFor(name, rot) {
+          if (name === 'clay') return clayOutline();
           if (name !== 'tesseract') return outlines[name];
           return outlines.tesseract.map(make4DProjector(rot));
         }
@@ -564,9 +802,12 @@
           // Zoom about the middle of the screen; lines thicken more gently than the shape grows.
           ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, dpr * width / 2 * (1 - zoom), dpr * height / 2 * (1 - zoom));
           lineScale = baseLineScale / Math.sqrt(zoom);
+          currentZoom = zoom;
           ctx.globalAlpha = 1;
 
           const project = makeProjector(rot);
+          lastProject = project;
+          stepClayAnimation(now);
           if (!morph) {
             drawShape(shape, project, rot);
             return;
@@ -622,7 +863,8 @@
         }
 
         function drawShape(name, project, rot) {
-          if (name === 'tesseract') drawTesseract(project, rot);
+          if (name === 'clay') drawClay(project);
+          else if (name === 'tesseract') drawTesseract(project, rot);
           else if (name === 'sphere') drawSphere(project);
           else drawMesh(name === 'cube' ? cube.faces : ball.faces, project);
         }
@@ -942,7 +1184,333 @@
           }
         }
 
-        return { draw, morphTo };
+
+        // ---- Clay: a soft ball you can pull into any shape ----
+        // An icosphere (2562 points) whose points move freely. Grabbing the clay picks every point
+        // within BRUSH of the spot under the cursor, weighted by a smooth falloff, and moves them
+        // with the mouse; a little smoothing as you drag keeps it soft and blobby.
+        const BRUSH = 0.5;
+        const CLAY_LIMIT = 2.4;
+        const UNDO_LIMIT = 30;
+        const CLAY_LIGHT = normalize([-0.42, -0.62, 0.66]);
+        const CLAY_HALF = normalize([CLAY_LIGHT[0], CLAY_LIGHT[1], CLAY_LIGHT[2] + 1]);
+        let clayColor = [246, 140, 118];
+        let making = false;
+        let hover = null;      // { x, y } in page coordinates
+        let stroke = null;
+        let clayAnim = null;
+        const undoStack = [];
+
+        function normalize(v) {
+          const l = Math.hypot(v[0], v[1], v[2]) || 1;
+          return [v[0] / l, v[1] / l, v[2] / l];
+        }
+
+        function buildClay() {
+          const phi = (1 + Math.sqrt(5)) / 2;
+          const verts = [[-1, phi, 0], [1, phi, 0], [-1, -phi, 0], [1, -phi, 0], [0, -1, phi], [0, 1, phi],
+            [0, -1, -phi], [0, 1, -phi], [phi, 0, -1], [phi, 0, 1], [-phi, 0, -1], [-phi, 0, 1]].map(normalize);
+          let faces = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2],
+            [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11],
+            [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+          for (let level = 0; level < 4; level++) {
+            const cache = new Map();
+            const mid = (a, b) => {
+              const key = a < b ? a + '_' + b : b + '_' + a;
+              if (!cache.has(key)) {
+                cache.set(key, verts.length);
+                verts.push(normalize([(verts[a][0] + verts[b][0]) / 2, (verts[a][1] + verts[b][1]) / 2, (verts[a][2] + verts[b][2]) / 2]));
+              }
+              return cache.get(key);
+            };
+            const next = [];
+            for (const [a, b, c] of faces) {
+              const ab = mid(a, b), bc = mid(b, c), ca = mid(c, a);
+              next.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]);
+            }
+            faces = next;
+          }
+          // Wind every face so its normal points outward
+          for (const f of faces) {
+            const [a, b, c] = f.map((i) => verts[i]);
+            const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+            if (n[0] * a[0] + n[1] * a[1] + n[2] * a[2] < 0) [f[1], f[2]] = [f[2], f[1]];
+          }
+
+          const count = verts.length;
+          const neighborSets = verts.map(() => new Set());
+          for (const [a, b, c] of faces) {
+            neighborSets[a].add(b).add(c);
+            neighborSets[b].add(a).add(c);
+            neighborSets[c].add(a).add(b);
+          }
+          const sphere = new Float32Array(verts.flat());
+          return {
+            count,
+            sphere,
+            pos: sphere.slice(),
+            faces: new Uint16Array(faces.flat()),
+            neighbors: neighborSets.map((set) => [...set]),
+            normals: new Float32Array(count * 3),
+            sx: new Float32Array(count),
+            sy: new Float32Array(count),
+            sz: new Float32Array(count),
+            sf: new Float32Array(count),
+            nz: new Float32Array(count),
+            shade: new Float32Array(count * 3),
+            depth: new Float32Array(faces.length),
+            dirty: true,
+            drawn: false
+          };
+        }
+
+        function updateClayNormals() {
+          const { pos, faces, normals } = clay;
+          normals.fill(0);
+          for (let f = 0; f < faces.length; f += 3) {
+            const a = faces[f] * 3, b = faces[f + 1] * 3, c = faces[f + 2] * 3;
+            const e1x = pos[b] - pos[a], e1y = pos[b + 1] - pos[a + 1], e1z = pos[b + 2] - pos[a + 2];
+            const e2x = pos[c] - pos[a], e2y = pos[c + 1] - pos[a + 1], e2z = pos[c + 2] - pos[a + 2];
+            const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+            for (const v of [a, b, c]) {
+              normals[v] += nx;
+              normals[v + 1] += ny;
+              normals[v + 2] += nz;
+            }
+          }
+          for (let i = 0; i < normals.length; i += 3) {
+            const l = Math.hypot(normals[i], normals[i + 1], normals[i + 2]) || 1;
+            normals[i] /= l;
+            normals[i + 1] /= l;
+            normals[i + 2] /= l;
+          }
+          clay.dirty = false;
+        }
+
+        function drawClay(project) {
+          if (clay.dirty) updateClayNormals();
+          const { pos, normals, faces, sx, sy, sz, sf, nz, shade, depth, count } = clay;
+          const m = project.m;
+          const out = {};
+          const [lx, ly, lz] = CLAY_LIGHT, [hx, hy, hz] = CLAY_HALF;
+          const [cr, cg, cb] = clayColor;
+
+          // Soft clay lighting per point: ambient + diffuse, a gentle sheen, and a faint rim
+          for (let i = 0; i < count; i++) {
+            const k = i * 3;
+            project(pos[k], pos[k + 1], pos[k + 2], out);
+            sx[i] = out.x;
+            sy[i] = out.y;
+            sz[i] = out.z;
+            sf[i] = out.f;
+            const n0 = normals[k], n1 = normals[k + 1], n2 = normals[k + 2];
+            const rx = m[0] * n0 + m[1] * n1 + m[2] * n2;
+            const ry = m[3] * n0 + m[4] * n1 + m[5] * n2;
+            const rz = m[6] * n0 + m[7] * n1 + m[8] * n2;
+            nz[i] = rz;
+            const diffuse = Math.max(0, rx * lx + ry * ly + rz * lz);
+            const sheen = Math.pow(Math.max(0, rx * hx + ry * hy + rz * hz), 28) * 0.35;
+            const rim = Math.pow(1 - Math.max(0, rz), 3) * 0.18;
+            const light = 0.42 + 0.62 * diffuse + rim;
+            shade[k] = cr * light + 255 * sheen;
+            shade[k + 1] = cg * light + 255 * sheen;
+            shade[k + 2] = cb * light + 255 * sheen;
+          }
+
+          // Front-facing triangles only, back to front
+          const visible = [];
+          for (let f = 0, t = 0; f < faces.length; f += 3, t++) {
+            const a = faces[f], b = faces[f + 1], c = faces[f + 2];
+            const cross = (sx[b] - sx[a]) * (sy[c] - sy[a]) - (sy[b] - sy[a]) * (sx[c] - sx[a]);
+            if (cross <= 0) continue;
+            depth[t] = sz[a] + sz[b] + sz[c];
+            visible.push(t);
+          }
+          visible.sort((p, q) => depth[p] - depth[q]);
+
+          ctx.lineJoin = 'round';
+          ctx.lineWidth = 0.6;
+          for (const t of visible) {
+            const a = faces[t * 3], b = faces[t * 3 + 1], c = faces[t * 3 + 2];
+            const r = Math.min(255, (shade[a * 3] + shade[b * 3] + shade[c * 3]) / 3) | 0;
+            const g = Math.min(255, (shade[a * 3 + 1] + shade[b * 3 + 1] + shade[c * 3 + 1]) / 3) | 0;
+            const bl = Math.min(255, (shade[a * 3 + 2] + shade[b * 3 + 2] + shade[c * 3 + 2]) / 3) | 0;
+            const color = `rgb(${r},${g},${bl})`;
+            ctx.beginPath();
+            ctx.moveTo(sx[a], sy[a]);
+            ctx.lineTo(sx[b], sy[b]);
+            ctx.lineTo(sx[c], sy[c]);
+            ctx.closePath();
+            ctx.fillStyle = color;
+            ctx.fill();
+            // A hairline in the same color hides the seams between triangles
+            ctx.strokeStyle = color;
+            ctx.stroke();
+          }
+          clay.drawn = true;
+
+          // Brush ring: where you'd grab, or what you're holding
+          if (!making) return;
+          const at = stroke ? stroke.center : (hover ? findClayPoint(hover.x, hover.y) : -1);
+          if (at < 0) return;
+          const radius = BRUSH * unit * sf[at];
+          ctx.strokeStyle = stroke ? 'rgba(255, 255, 255, 0.85)' : 'rgba(255, 255, 255, 0.55)';
+          ctx.lineWidth = 1.5 * lineScale;
+          ctx.beginPath();
+          ctx.arc(sx[at], sy[at], radius, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+          ctx.beginPath();
+          ctx.arc(sx[at], sy[at], 2.5 * lineScale, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Page coordinates -> the frontmost clay point under them, or -1
+        function findClayPoint(pageX, pageY) {
+          if (shape !== 'clay' || morph || !clay.drawn) return -1;
+          const x = width / 2 + (pageX - width / 2) / currentZoom;
+          const y = height / 2 + (pageY - height / 2) / currentZoom;
+          const reach = (0.12 * unit) ** 2;
+          let best = -1, bestZ = -Infinity;
+          for (let i = 0; i < clay.count; i++) {
+            if (clay.nz[i] <= 0.05) continue;
+            const dx = clay.sx[i] - x, dy = clay.sy[i] - y;
+            if (dx * dx + dy * dy < reach && clay.sz[i] > bestZ) {
+              bestZ = clay.sz[i];
+              best = i;
+            }
+          }
+          return best;
+        }
+
+        function pushUndo() {
+          undoStack.push(clay.pos.slice());
+          if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+        }
+
+        function startSculpt(center) {
+          pushUndo();
+          clayAnim = null;
+          const { pos, count } = clay;
+          const cx = pos[center * 3], cy = pos[center * 3 + 1], cz = pos[center * 3 + 2];
+          const idx = [], weight = [];
+          for (let i = 0; i < count; i++) {
+            const d = Math.hypot(pos[i * 3] - cx, pos[i * 3 + 1] - cy, pos[i * 3 + 2] - cz);
+            if (d < BRUSH) {
+              const t = 1 - (d / BRUSH) ** 2;
+              idx.push(i);
+              weight.push(t * t);
+            }
+          }
+          stroke = { center, idx, weight };
+        }
+
+        // Move the grabbed clay by a mouse move given in page pixels
+        function sculptMove(dx, dy) {
+          if (!stroke || !lastProject) return;
+          const m = lastProject.m;
+          const scale = unit * clay.sf[stroke.center] * currentZoom;
+          const vx = dx / scale, vy = dy / scale;
+          // Screen-space move back into model space (the rotation's transpose)
+          const mx = m[0] * vx + m[3] * vy, my = m[1] * vx + m[4] * vy, mz = m[2] * vx + m[5] * vy;
+          const { pos, neighbors } = clay;
+          const { idx, weight } = stroke;
+          for (let k = 0; k < idx.length; k++) {
+            const i = idx[k] * 3, w = weight[k];
+            pos[i] += mx * w;
+            pos[i + 1] += my * w;
+            pos[i + 2] += mz * w;
+          }
+          // Relax the moved area a little toward its neighbors so it stays smooth
+          for (let k = 0; k < idx.length; k++) {
+            const i = idx[k], w = weight[k] * 0.18;
+            const nb = neighbors[i];
+            let ax = 0, ay = 0, az = 0;
+            for (const j of nb) {
+              ax += pos[j * 3];
+              ay += pos[j * 3 + 1];
+              az += pos[j * 3 + 2];
+            }
+            const p = i * 3;
+            pos[p] += (ax / nb.length - pos[p]) * w;
+            pos[p + 1] += (ay / nb.length - pos[p + 1]) * w;
+            pos[p + 2] += (az / nb.length - pos[p + 2]) * w;
+            const len = Math.hypot(pos[p], pos[p + 1], pos[p + 2]);
+            if (len > CLAY_LIMIT) {
+              pos[p] *= CLAY_LIMIT / len;
+              pos[p + 1] *= CLAY_LIMIT / len;
+              pos[p + 2] *= CLAY_LIMIT / len;
+            }
+          }
+          clay.dirty = true;
+        }
+
+        function endSculpt() {
+          stroke = null;
+        }
+
+        // Ease the clay from its current shape to `target` over a moment
+        function animateClayTo(target) {
+          clayAnim = { from: clay.pos.slice(), to: target, start: performance.now() };
+        }
+
+        function stepClayAnimation(now) {
+          if (!clayAnim) return;
+          const t = Math.min(1, (now - clayAnim.start) / 450);
+          const e = easeInOut(t);
+          const { from, to } = clayAnim;
+          for (let i = 0; i < from.length; i++) clay.pos[i] = from[i] + (to[i] - from[i]) * e;
+          clay.dirty = true;
+          if (t >= 1) clayAnim = null;
+        }
+
+        function clayOutline() {
+          const points = [];
+          for (let k = 0; k < MORPH_POINTS; k++) {
+            const i = Math.floor((k * clay.count) / MORPH_POINTS) * 3;
+            points.push([clay.pos[i], clay.pos[i + 1], clay.pos[i + 2]]);
+          }
+          return points;
+        }
+
+        const clayApi = {
+          clayHit: (x, y) => (making ? findClayPoint(x, y) : -1),
+          setHover(x, y) {
+            hover = { x, y };
+            return findClayPoint(x, y) >= 0;
+          },
+          setMaking(on) {
+            making = on;
+            hover = null;
+            stroke = null;
+          },
+          startSculpt,
+          sculptMove,
+          endSculpt,
+          undoClay() {
+            if (undoStack.length) animateClayTo(undoStack.pop());
+          },
+          resetClay() {
+            pushUndo();
+            animateClayTo(clay.sphere.slice());
+          },
+          setClayColor(rgb) {
+            clayColor = rgb;
+          },
+          clayColor: () => clayColor,
+          exportClay: () => ({ color: clayColor, pos: Array.from(clay.pos, (v) => Math.round(v * 1e4) / 1e4) }),
+          importClay(data) {
+            if (!data || !Array.isArray(data.pos) || data.pos.length !== clay.pos.length) return false;
+            if (!data.pos.every(Number.isFinite)) return false;
+            clay.pos.set(data.pos);
+            clay.dirty = true;
+            if (Array.isArray(data.color) && data.color.length === 3) clayColor = data.color.map(Number);
+            return true;
+          }
+        };
+
+        return Object.assign({ draw, morphTo }, clayApi);
       }
     })();
   </script>
