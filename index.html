@@ -318,13 +318,13 @@
       function createRenderer(canvas) {
         const ctx = canvas.getContext('2d');
         const PERSPECTIVE = 1000; // px, like CSS `perspective: 1000px`
-        let width = 0, height = 0, unit = 0;
+        let width = 0, height = 0, unit = 0, lineScale = 1;
 
         const meshes = {
           cube: buildCube(),
-          sphere: buildSphere(),
           hexecontahedron: buildHexecontahedron()
         };
+        const globeLines = buildGlobeLines();
         const tesseract = buildTesseract();
 
         function resize() {
@@ -335,6 +335,8 @@
           canvas.height = Math.round(height * dpr);
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
           unit = Math.min(width, height) * 0.15;
+          // Line widths were tuned at unit = 120px; keep them in proportion on big and small screens.
+          lineScale = Math.max(0.75, unit / 120);
         }
         window.addEventListener('resize', resize);
         resize();
@@ -370,6 +372,7 @@
           ctx.clearRect(0, 0, width, height);
           const project = makeProjector(rot);
           if (shape === 'tesseract') drawTesseract(project, rot);
+          else if (shape === 'sphere') drawSphere(project);
           else drawMesh(meshes[shape], project);
         }
 
@@ -444,36 +447,100 @@
           return faces.map((f) => polygon(f.pts, { fill: f.color, stroke: 'rgba(255, 255, 255, 0.75)', lineWidth: 2 }));
         }
 
-        // 12 discs through the vertical axis and 12 through the horizontal one.
-        function buildSphere() {
-          const sliceCount = 12, segments = 48;
-          const circle = [];
-          for (let i = 0; i < segments; i++) {
-            const t = (i / segments) * Math.PI * 2;
-            circle.push([Math.cos(t), Math.sin(t), 0]);
+        // Latitude and longitude rings on the unit sphere. Only the lines are geometry; the
+        // body is a shaded circle, since a sphere's outline is a circle from any angle.
+        function buildGlobeLines() {
+          const segments = 96;
+          const lines = [];
+          for (let lat = -75; lat <= 75; lat += 15) {
+            const a = lat * Math.PI / 180, y = Math.sin(a), r = Math.cos(a);
+            const pts = [];
+            for (let i = 0; i <= segments; i++) {
+              const t = (i / segments) * Math.PI * 2;
+              pts.push([r * Math.cos(t), y, r * Math.sin(t)]);
+            }
+            lines.push(pts);
           }
-          const discs = [];
-          for (const rotate of [rotY, rotX]) {
-            for (let i = 0; i < sliceCount; i++) {
-              const angle = (i / sliceCount) * 180;
-              const o = Math.sin(angle * Math.PI / 180) * 0.3 + 0.2;
-              discs.push(polygon(circle.map((p) => rotate(p, angle)), {
-                gradient: {
-                  type: 'radial',
-                  center: [0, 0, 0],
-                  radius: 1,
-                  stops: [
-                    [0, `rgba(100, 200, 255, ${0.4 * o})`],
-                    [0.85, `rgba(50, 100, 230, ${0.2 * o})`],
-                    [1, `rgba(200, 230, 255, ${0.25 * o})`]
-                  ]
-                },
-                stroke: `rgba(255, 255, 255, ${0.4 * o})`,
-                lineWidth: 1
-              }));
+          for (let lon = 0; lon < 180; lon += 15) {
+            const a = lon * Math.PI / 180;
+            const pts = [];
+            for (let i = 0; i <= segments; i++) {
+              const t = (i / segments) * Math.PI * 2;
+              pts.push([Math.cos(t) * Math.cos(a), Math.sin(t), Math.cos(t) * Math.sin(a)]);
+            }
+            lines.push(pts);
+          }
+          return lines.map((pts) => ({ pts, screen: pts.map(() => ({})) }));
+        }
+
+        // Light comes from the upper left, toward the viewer; it stays fixed while the grid turns.
+        const LIGHT = { x: -0.45, y: -0.55 };
+        const FRONT_BANDS = 6;
+
+        function drawSphere(project) {
+          const c = {};
+          project(0, 0, 0, c);
+          const r = unit * PERSPECTIVE / Math.sqrt(PERSPECTIVE * PERSPECTIVE - unit * unit);
+
+          // Bucket grid segments by how directly they face the viewer, so each bucket is one
+          // stroke call: the back half is drawn faintly behind the body, the front half on top
+          // and fading toward the edge.
+          const back = new Path2D();
+          const front = Array.from({ length: FRONT_BANDS }, () => new Path2D());
+          for (const line of globeLines) {
+            const s = line.screen;
+            for (let i = 0; i < line.pts.length; i++) {
+              const p = line.pts[i];
+              project(p[0], p[1], p[2], s[i]);
+              if (i === 0) continue;
+              const facing = (s[i - 1].z + s[i].z) / (2 * unit);
+              const path = facing < 0 ? back : front[Math.min(FRONT_BANDS - 1, Math.floor(facing * FRONT_BANDS))];
+              path.moveTo(s[i - 1].x, s[i - 1].y);
+              path.lineTo(s[i].x, s[i].y);
             }
           }
-          return discs;
+
+          ctx.lineCap = 'round';
+          ctx.lineWidth = lineScale;
+          ctx.strokeStyle = 'rgba(170, 210, 255, 0.12)';
+          ctx.stroke(back);
+
+          // Body: translucent blue, brightest where it faces the light
+          const hx = c.x + LIGHT.x * r * 0.55, hy = c.y + LIGHT.y * r * 0.55;
+          const body = ctx.createRadialGradient(hx, hy, 0, c.x, c.y, r);
+          body.addColorStop(0, 'rgba(120, 200, 255, 0.75)');
+          body.addColorStop(0.45, 'rgba(50, 120, 230, 0.6)');
+          body.addColorStop(0.85, 'rgba(25, 60, 170, 0.6)');
+          body.addColorStop(1, 'rgba(15, 35, 110, 0.7)');
+          ctx.fillStyle = body;
+          ctx.beginPath();
+          ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Soft rim where the glass is seen edge-on
+          const rim = ctx.createRadialGradient(c.x, c.y, r * 0.8, c.x, c.y, r);
+          rim.addColorStop(0, 'rgba(140, 200, 255, 0)');
+          rim.addColorStop(1, 'rgba(140, 200, 255, 0.3)');
+          ctx.fillStyle = rim;
+          ctx.fill();
+
+          for (let k = 0; k < FRONT_BANDS; k++) {
+            ctx.strokeStyle = `rgba(255, 255, 255, ${0.12 + 0.5 * (k + 0.5) / FRONT_BANDS})`;
+            ctx.lineWidth = lineScale;
+            ctx.stroke(front[k]);
+          }
+
+          // Specular highlight
+          const sx = c.x + LIGHT.x * r * 0.62, sy = c.y + LIGHT.y * r * 0.62;
+          const spec = ctx.createRadialGradient(sx, sy, 0, sx, sy, r * 0.32);
+          spec.addColorStop(0, 'rgba(255, 255, 255, 0.45)');
+          spec.addColorStop(1, 'rgba(255, 255, 255, 0)');
+          ctx.fillStyle = spec;
+          ctx.fill();
+
+          ctx.strokeStyle = 'rgba(200, 230, 255, 0.45)';
+          ctx.lineWidth = lineScale;
+          ctx.stroke();
         }
 
         // 60 hexagonal tiles on a sphere: 6 latitude rings of 10.
@@ -534,14 +601,9 @@
           return { verts, edges, faces, projected: verts.map(() => ({})) };
         }
 
-        // Inner (far along w) cube is cyan, outer (near) cube is magenta.
-        function hueFor(w) {
-          const t = Math.max(0, Math.min(1, (w + 1.5) / 3));
-          return 190 + t * 125;
-        }
-
         // Rotate in 4D, project 4D -> 3D (further along w = smaller), then rotate and
-        // project to 2D like every other shape.
+        // project to 2D like every other shape. Drawn as plain white lines: edges nearer the
+        // viewer are brighter and thicker, so the structure reads without color coding.
         function drawTesseract(project, rot) {
           const W_DISTANCE = 3.5;
           const SCALE = 0.8;
@@ -561,17 +623,16 @@
             const k = (W_DISTANCE / (W_DISTANCE - w)) * SCALE;
             const p = projected[i];
             project(x * k, y * k, z * k, p);
-            p.w = w;
             p.scale = p.f * k / SCALE;
           }
 
-          ctx.globalCompositeOperation = 'lighter';
-          ctx.lineCap = 'round';
+          // 0 at the far side of the shape, 1 at the near side
+          const nearness = (z) => Math.max(0, Math.min(1, 0.5 + z / (4 * unit)));
 
-          // Faces: faint additive fills, so overlaps glow brighter and no depth sort is needed
+          // Faces: a very faint fill so the cells read as volumes
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.025)';
           for (const face of faces) {
             const a = projected[face[0]], b = projected[face[1]], c = projected[face[2]], d = projected[face[3]];
-            ctx.fillStyle = `hsla(${hueFor((a.w + b.w + c.w + d.w) / 4)}, 90%, 55%, 0.045)`;
             ctx.beginPath();
             ctx.moveTo(a.x, a.y);
             ctx.lineTo(b.x, b.y);
@@ -581,36 +642,27 @@
             ctx.fill();
           }
 
-          // Edges: a wide soft pass for glow, then a thin bright core
-          for (const [i, j] of edges) {
-            const a = projected[i], b = projected[j];
-            const depth = Math.max(0.35, Math.min(1, 0.65 + (a.z + b.z) / (4 * unit)));
-            const grad = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
-            grad.addColorStop(0, `hsla(${hueFor(a.w)}, 100%, 65%, ${depth})`);
-            grad.addColorStop(1, `hsla(${hueFor(b.w)}, 100%, 65%, ${depth})`);
-            ctx.strokeStyle = grad;
-            const thickness = (a.scale + b.scale) / 2;
-
-            ctx.globalAlpha = 0.18;
-            ctx.lineWidth = 7 * thickness;
+          // Edges back to front, so nearer edges cross over farther ones
+          const order = edges
+            .map(([i, j]) => ({ a: projected[i], b: projected[j], z: (projected[i].z + projected[j].z) / 2 }))
+            .sort((e1, e2) => e1.z - e2.z);
+          ctx.lineCap = 'round';
+          for (const e of order) {
+            const n = nearness(e.z);
+            ctx.strokeStyle = `rgba(255, 255, 255, ${0.25 + 0.65 * n})`;
+            ctx.lineWidth = (0.8 + 1.2 * n) * (e.a.scale + e.b.scale) / 2 * lineScale;
             ctx.beginPath();
-            ctx.moveTo(a.x, a.y);
-            ctx.lineTo(b.x, b.y);
-            ctx.stroke();
-
-            ctx.globalAlpha = 1;
-            ctx.lineWidth = 1.6 * thickness;
+            ctx.moveTo(e.a.x, e.a.y);
+            ctx.lineTo(e.b.x, e.b.y);
             ctx.stroke();
           }
 
           for (const p of projected) {
-            ctx.fillStyle = `hsla(${hueFor(p.w)}, 100%, 85%, 0.9)`;
+            ctx.fillStyle = `rgba(255, 255, 255, ${0.4 + 0.6 * nearness(p.z)})`;
             ctx.beginPath();
-            ctx.arc(p.x, p.y, 2.6 * p.scale, 0, Math.PI * 2);
+            ctx.arc(p.x, p.y, 2.2 * p.scale * lineScale, 0, Math.PI * 2);
             ctx.fill();
           }
-
-          ctx.globalCompositeOperation = 'source-over';
         }
 
         return { draw };
