@@ -68,6 +68,18 @@
       border: 2px solid transparent;
     }
 
+    .shape-button[hidden],
+    .selector-divider[hidden] {
+      display: none;
+    }
+
+    .selector-divider {
+      width: 1px;
+      align-self: stretch;
+      margin-block: 8px;
+      background: rgba(255, 255, 255, 0.2);
+    }
+
     .shape-button:hover {
       transform: scale(1.1);
       background: rgba(0, 0, 0, 0.5);
@@ -110,7 +122,7 @@
     }
 
     @media (max-width: 420px) {
-      .shape-selector { gap: 12px; padding: 12px 16px; bottom: 20px; }
+      .shape-selector { gap: 10px; padding: 12px 14px; bottom: 20px; }
       .shape-button { width: 50px; height: 50px; }
       .shape-button svg { width: 26px; height: 26px; }
     }
@@ -159,7 +171,7 @@
         <circle cx="12" cy="12" r="10" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="0.4" />
       </svg>
     </button>
-    <button type="button" class="shape-button" data-shape="hexecontahedron" aria-label="Hexecontahedron" aria-pressed="false">
+    <button type="button" class="shape-button" data-shape="ball" aria-label="Soccer ball (truncated icosahedron)" aria-pressed="false">
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <!-- Faceted hexagon: an outer ring of six facets around a central face -->
         <path d="M3.3,7L12,2L12,7.5L8.1,9.75Z" fill="url(#g-light)" />
@@ -186,12 +198,23 @@
         <path d="M12,2L3,7V17L12,22L21,17V7Z M12,8L8.4,10V14L12,16L15.6,14V10Z M12,2V8 M21,7L15.6,10 M21,17L15.6,14 M12,22V16 M3,17L8.4,14 M3,7L8.4,10" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="0.4" stroke-linejoin="round" />
       </svg>
     </button>
+    <span class="selector-divider" id="tilt-divider" hidden></span>
+    <button type="button" class="shape-button" id="tilt-toggle" aria-label="Tilt to spin" title="Tilt your phone to spin the shape" aria-pressed="false" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <g transform="rotate(-18 12 12)">
+          <rect x="7.5" y="3" width="9" height="18" rx="2" fill="url(#g-medium)" />
+          <rect x="9" y="5" width="6" height="12.5" rx="0.6" fill="url(#g-light)" />
+          <rect x="7.5" y="3" width="9" height="18" rx="2" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="0.4" />
+        </g>
+        <path d="M4.5,8 Q1.5,12 4.5,16 M3.1,15.3 L4.5,16 L4.7,14.4 M19.5,16 Q22.5,12 19.5,8 M20.9,8.7 L19.5,8 L19.3,9.6" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
   </nav>
 
   <script>
     (function () {
       const canvas = document.getElementById('stage');
-      const shapeButtons = document.querySelectorAll('.shape-button');
+      const shapeButtons = document.querySelectorAll('.shape-button[data-shape]');
       const renderer = createRenderer(canvas);
 
       // ---- Rotation state (degrees for 3D, radians for the 4D planes) ----
@@ -269,10 +292,99 @@
       window.addEventListener('pointerup', endPointer);
       window.addEventListener('pointercancel', endPointer);
 
+      // ---- Scroll-wheel zoom (mouse wheel, or pinch on a trackpad, which arrives as ctrl + wheel) ----
+      const ZOOM_MIN = 0.5, ZOOM_MAX = 2.2;
+      let zoom = 1, zoomTarget = 1;
+
+      window.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const px = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+        const rate = e.ctrlKey ? 0.01 : 0.0015;
+        zoomTarget = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomTarget * Math.exp(-px * rate)));
+      }, { passive: false });
+
+      // ---- Tilt to spin (phones) ----
+      // Tilting the phone spins the shape like a ball rolling downhill. The neutral angle slowly
+      // follows how the phone is held, so holding it at a new angle settles instead of spinning forever.
+      const TILT_DEADZONE = 3;     // degrees of tilt that do nothing
+      const TILT_MAX = 35;         // degrees past the deadzone that still add speed
+      const TILT_SPEED = 6;        // deg/s of spin per degree of tilt
+      const TILT_RECENTER_S = 5;   // seconds for the neutral angle to catch up
+      const tilt = { on: false, beta: 0, gamma: 0, baseBeta: null, baseGamma: 0 };
+      const tiltButton = document.getElementById('tilt-toggle');
+      const canTilt = 'DeviceOrientationEvent' in window && window.matchMedia('(pointer: coarse)').matches;
+      const tiltNeedsPermission = canTilt && typeof DeviceOrientationEvent.requestPermission === 'function';
+
+      function onOrientation(e) {
+        if (e.beta == null || e.gamma == null) return;
+        tilt.beta = e.beta;
+        tilt.gamma = e.gamma;
+        if (tilt.baseBeta === null) {
+          tilt.baseBeta = e.beta;
+          tilt.baseGamma = e.gamma;
+        }
+      }
+
+      function setTilt(on) {
+        tilt.on = on;
+        tilt.baseBeta = null;
+        if (on) window.addEventListener('deviceorientation', onOrientation);
+        else window.removeEventListener('deviceorientation', onOrientation);
+        tiltButton.classList.toggle('active', on);
+        tiltButton.setAttribute('aria-pressed', on);
+      }
+
+      if (canTilt) {
+        tiltButton.hidden = false;
+        document.getElementById('tilt-divider').hidden = false;
+        tiltButton.addEventListener('click', async () => {
+          if (tilt.on) return setTilt(false);
+          if (tiltNeedsPermission) {
+            // iPhone only hands out motion data after the user allows it from a tap
+            try {
+              if (await DeviceOrientationEvent.requestPermission() !== 'granted') return;
+            } catch (err) {
+              return;
+            }
+          }
+          setTilt(true);
+        });
+        if (!tiltNeedsPermission) setTilt(true);
+      }
+
+      function tiltAmount(v) {
+        const mag = Math.abs(v) - TILT_DEADZONE;
+        return mag > 0 ? Math.sign(v) * Math.min(mag, TILT_MAX) : 0;
+      }
+
+      function applyTilt(dt, now) {
+        if (!tilt.on || tilt.baseBeta === null) return;
+        const recenter = 1 - Math.exp(-dt / TILT_RECENTER_S);
+        tilt.baseBeta += (tilt.beta - tilt.baseBeta) * recenter;
+        tilt.baseGamma += (tilt.gamma - tilt.baseGamma) * recenter;
+
+        // In the phone's own frame: x = roll to the right, y = top edge tipped away (up the screen)
+        const tx = tilt.gamma - tilt.baseGamma;
+        const ty = tilt.baseBeta - tilt.beta;
+        // Turn that into screen directions when the phone is in landscape
+        const angle = (screen.orientation ? screen.orientation.angle : window.orientation || 0) * Math.PI / 180;
+        const sx = tiltAmount(tx * Math.cos(angle) - ty * Math.sin(angle));
+        const sy = tiltAmount(tx * Math.sin(angle) + ty * Math.cos(angle));
+        if (!sx && !sy) return;
+
+        rot.y += sx * TILT_SPEED * dt;
+        rot.x += sy * TILT_SPEED * dt;
+        lastInput = now;
+        autoBlend = 0;
+      }
+
       // ---- Shape selector ----
       shapeButtons.forEach((button) => {
         button.addEventListener('click', () => {
-          currentShape = button.dataset.shape;
+          const name = button.dataset.shape;
+          if (name === currentShape) return;
+          currentShape = name;
+          renderer.morphTo(name, rot, performance.now());
           shapeButtons.forEach((btn) => {
             const on = btn === button;
             btn.classList.toggle('active', on);
@@ -296,6 +408,7 @@
           rot.yw += momentum.yw * dt;
           for (const k in momentum) momentum[k] *= decay;
         }
+        applyTilt(dt, now);
 
         // Ease auto-spin back in once the user has left it alone.
         if (!dragging && now - lastInput > IDLE_BEFORE_AUTO) autoBlend = Math.min(1, autoBlend + dt);
@@ -307,36 +420,49 @@
         rot.xw += AUTO_SPEED_4D.xw * autoBlend4D * dt;
         rot.yw += AUTO_SPEED_4D.yw * autoBlend4D * dt;
 
-        renderer.draw(currentShape, rot);
+        zoom += (zoomTarget - zoom) * (1 - Math.exp(-dt * 12));
+
+        renderer.draw(rot, zoom, now);
         requestAnimationFrame(frame);
       }
       requestAnimationFrame(frame);
 
       // ---- Renderer ----
       // Coordinates use the CSS convention (x right, y down, z toward the viewer) and one
-      // unit is half the shape's width, so a cube spans -1..1 and is min(30vw, 30vh) wide.
+      // unit is half the cube's width, so the cube spans -1..1 and is min(30vw, 30vh) wide.
       function createRenderer(canvas) {
         const ctx = canvas.getContext('2d');
-        const PERSPECTIVE = 1000; // px, like CSS `perspective: 1000px`
-        let width = 0, height = 0, unit = 0, lineScale = 1;
+        const PERSPECTIVE = 1000;   // px, like CSS `perspective: 1000px`
+        const MORPH_MS = 1300;
+        const MORPH_POINTS = 900;
+        const MORPH_STAGGER = 0.3;  // fraction of the morph over which points set off, top to bottom
+        let width = 0, height = 0, unit = 0, dpr = 1, baseLineScale = 1, lineScale = 1;
 
-        const meshes = {
-          cube: buildCube(),
-          hexecontahedron: buildHexecontahedron()
-        };
+        const cube = buildCube();
         const sphereDiscs = buildSphereDiscs();
+        const ball = buildBall();
         const tesseract = buildTesseract();
 
+        // Each shape's outline as evenly spaced points; morphs move these from one outline to the next.
+        const outlines = {
+          cube: samplePoints(cube.edges, MORPH_POINTS),
+          sphere: samplePoints(sphereDiscs.edges, MORPH_POINTS),
+          ball: samplePoints(ball.edges, MORPH_POINTS),
+          tesseract: samplePoints(tesseract.edges.map(([i, j]) => [tesseract.verts[i], tesseract.verts[j]]), MORPH_POINTS)
+        };
+
+        let shape = 'cube';
+        let morph = null;
+
         function resize() {
-          const dpr = Math.min(window.devicePixelRatio || 1, 2);
+          dpr = Math.min(window.devicePixelRatio || 1, 2);
           width = window.innerWidth;
           height = window.innerHeight;
           canvas.width = Math.round(width * dpr);
           canvas.height = Math.round(height * dpr);
-          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
           unit = Math.min(width, height) * 0.15;
           // Line widths were tuned at unit = 120px; keep them in proportion on big and small screens.
-          lineScale = Math.max(0.75, unit / 120);
+          baseLineScale = Math.max(0.75, unit / 120);
         }
         window.addEventListener('resize', resize);
         resize();
@@ -368,15 +494,140 @@
           };
         }
 
-        function draw(shape, rot) {
-          ctx.clearRect(0, 0, width, height);
-          const project = makeProjector(rot);
-          if (shape === 'tesseract') drawTesseract(project, rot);
-          else if (shape === 'sphere') drawSphere(project);
-          else drawMesh(meshes[shape], project);
+        // Rotates a tesseract point in the XW and YW planes, then projects it from 4D to 3D:
+        // the further along w, the smaller. Returns [x, y, z, k] where k is the 4D shrink factor.
+        const TESSERACT_W_DISTANCE = 3.5;
+        const TESSERACT_SCALE = 0.8;
+        function make4DProjector(rot) {
+          const cxw = Math.cos(rot.xw), sxw = Math.sin(rot.xw);
+          const cyw = Math.cos(rot.yw), syw = Math.sin(rot.yw);
+          return function ([x, y, z, w]) {
+            let t = x * cxw - w * sxw;
+            w = x * sxw + w * cxw;
+            x = t;
+            t = y * cyw - w * syw;
+            w = y * syw + w * cyw;
+            y = t;
+            const k = (TESSERACT_W_DISTANCE / (TESSERACT_W_DISTANCE - w)) * TESSERACT_SCALE;
+            return [x * k, y * k, z * k, k];
+          };
         }
 
-        // Translucent polygons drawn back to front (painter's algorithm).
+        function outlineFor(name, rot) {
+          if (name !== 'tesseract') return outlines[name];
+          return outlines.tesseract.map(make4DProjector(rot));
+        }
+
+        // Orders points top to bottom in latitude bands, snaking around each band, so that
+        // matching two shapes' points by rank sends each point to a nearby spot on the other shape.
+        function sweepOrder(points) {
+          const BANDS = 18;
+          return points
+            .map((p, i) => {
+              const r = Math.hypot(p[0], p[1], p[2]) || 1;
+              const lat = Math.asin(Math.max(-1, Math.min(1, p[1] / r)));
+              const band = Math.min(BANDS - 1, Math.floor((lat / Math.PI + 0.5) * BANDS));
+              const lon = Math.atan2(p[2], p[0]);
+              return { i, band, lon: band % 2 ? -lon : lon };
+            })
+            .sort((a, b) => a.band - b.band || a.lon - b.lon)
+            .map((k) => k.i);
+        }
+
+        function morphTo(name, rot, now) {
+          // Switching mid-morph continues from wherever the points are right now.
+          const snapshot = morph ? morph.current.map((p) => p.slice()) : null;
+          const from = snapshot ? null : shape;
+          const src = snapshot || outlineFor(from, rot);
+          morph = {
+            from,
+            snapshot,
+            to: name,
+            start: now,
+            srcOrder: sweepOrder(src),
+            dstOrder: sweepOrder(outlineFor(name, rot)),
+            current: Array.from({ length: MORPH_POINTS }, () => [0, 0, 0]),
+            screen: {}
+          };
+          shape = name;
+        }
+
+        const smoothstep = (x) => {
+          x = Math.max(0, Math.min(1, x));
+          return x * x * (3 - 2 * x);
+        };
+        const easeInOut = (x) => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+
+        function draw(rot, zoom, now) {
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.clearRect(0, 0, width, height);
+          // Zoom about the middle of the screen; lines thicken more gently than the shape grows.
+          ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, dpr * width / 2 * (1 - zoom), dpr * height / 2 * (1 - zoom));
+          lineScale = baseLineScale / Math.sqrt(zoom);
+          ctx.globalAlpha = 1;
+
+          const project = makeProjector(rot);
+          if (!morph) {
+            drawShape(shape, project, rot);
+            return;
+          }
+
+          // The old shape fades out as its outline dissolves into points, the points travel,
+          // and the new shape fades in as they settle onto its outline.
+          const t = Math.min(1, (now - morph.start) / MORPH_MS);
+          if (morph.from && t < 0.25) {
+            ctx.globalAlpha = 1 - smoothstep(t / 0.25);
+            drawShape(morph.from, project, rot);
+          }
+          if (t > 0.75) {
+            ctx.globalAlpha = smoothstep((t - 0.75) / 0.25);
+            drawShape(morph.to, project, rot);
+          }
+          ctx.globalAlpha = Math.min(smoothstep(t / 0.15), 1 - smoothstep((t - 0.85) / 0.15));
+          drawMorphPoints(t, project, rot);
+          ctx.globalAlpha = 1;
+          if (t >= 1) morph = null;
+        }
+
+        function drawMorphPoints(t, project, rot) {
+          const BANDS = 4;
+          const src = morph.snapshot || outlineFor(morph.from, rot);
+          const dst = outlineFor(morph.to, rot);
+          const paths = Array.from({ length: BANDS }, () => new Path2D());
+          const s = morph.screen;
+
+          for (let k = 0; k < MORPH_POINTS; k++) {
+            const delay = (k / MORPH_POINTS) * MORPH_STAGGER;
+            const e = easeInOut(Math.max(0, Math.min(1, (t - delay) / (1 - MORPH_STAGGER))));
+            const a = src[morph.srcOrder[k]], b = dst[morph.dstOrder[k]];
+            // Points swell outward a little mid-flight, so the morph breathes instead of sliding
+            const puff = 1 + 0.18 * Math.sin(Math.PI * e);
+            const p = morph.current[k];
+            p[0] = (a[0] + (b[0] - a[0]) * e) * puff;
+            p[1] = (a[1] + (b[1] - a[1]) * e) * puff;
+            p[2] = (a[2] + (b[2] - a[2]) * e) * puff;
+
+            project(p[0], p[1], p[2], s);
+            const near = Math.max(0, Math.min(0.999, 0.5 + s.z / (3 * unit)));
+            const r = (0.9 + 0.9 * near) * lineScale * s.f;
+            const path = paths[Math.floor(near * BANDS)];
+            path.moveTo(s.x + r, s.y);
+            path.arc(s.x, s.y, r, 0, Math.PI * 2);
+          }
+
+          for (let b = 0; b < BANDS; b++) {
+            ctx.fillStyle = `rgba(255, 255, 255, ${0.3 + 0.7 * (b + 0.5) / BANDS})`;
+            ctx.fill(paths[b]);
+          }
+        }
+
+        function drawShape(name, project, rot) {
+          if (name === 'tesseract') drawTesseract(project, rot);
+          else if (name === 'sphere') drawSphere(project);
+          else drawMesh(name === 'cube' ? cube.faces : ball.faces, project);
+        }
+
+        // Translucent polygons drawn back to front (painter's algorithm). Exact for convex shapes.
         function drawMesh(mesh, project) {
           for (const poly of mesh) {
             let sum = 0;
@@ -396,33 +647,37 @@
             ctx.moveTo(s[0].x, s[0].y);
             for (let i = 1; i < s.length; i++) ctx.lineTo(s[i].x, s[i].y);
             ctx.closePath();
-            ctx.fillStyle = resolveFill(poly, project);
+            ctx.fillStyle = poly.fill;
             ctx.fill();
             ctx.strokeStyle = poly.stroke;
-            ctx.lineWidth = poly.lineWidth;
+            ctx.lineWidth = poly.lineWidth * lineScale;
             ctx.stroke();
           }
         }
 
-        const tmpA = {}, tmpB = {};
-        function resolveFill(poly, project) {
-          const g = poly.gradient;
-          if (!g) return poly.fill;
-          let grad;
-          if (g.type === 'radial') {
-            project(g.center[0], g.center[1], g.center[2], tmpA);
-            grad = ctx.createRadialGradient(tmpA.x, tmpA.y, 0, tmpA.x, tmpA.y, g.radius * unit * tmpA.f);
-          } else {
-            project(g.from[0], g.from[1], g.from[2], tmpA);
-            project(g.to[0], g.to[1], g.to[2], tmpB);
-            grad = ctx.createLinearGradient(tmpA.x, tmpA.y, tmpB.x, tmpB.y);
-          }
-          for (const [offset, color] of g.stops) grad.addColorStop(offset, color);
-          return grad;
-        }
-
         function polygon(pts, style) {
           return Object.assign({ pts, screen: pts.map(() => ({})), depth: 0 }, style);
+        }
+
+        // Spreads `count` points evenly along a list of [a, b] segments (any dimension).
+        function samplePoints(segments, count) {
+          const lengths = segments.map(([a, b]) => Math.hypot(...a.map((v, i) => b[i] - v)));
+          const total = lengths.reduce((sum, l) => sum + l, 0);
+          const step = total / count;
+          const points = [];
+          let next = step / 2;
+          let walked = 0;
+          segments.forEach(([a, b], s) => {
+            const len = lengths[s];
+            while (next <= walked + len && points.length < count) {
+              const f = (next - walked) / len;
+              points.push(a.map((v, i) => v + (b[i] - v) * f));
+              next += step;
+            }
+            walked += len;
+          });
+          while (points.length < count) points.push(segments[0][0].slice());
+          return points;
         }
 
         // CSS rotateX / rotateY applied to a point [x, y, z]
@@ -444,7 +699,18 @@
             { color: 'rgba(255, 255, 255, 0.375)', pts: [[-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, 1]] },   // top
             { color: 'rgba(0, 0, 255, 0.375)',     pts: [[-1, 1, 1], [1, 1, 1], [1, 1, -1], [-1, 1, -1]] }        // bottom
           ];
-          return faces.map((f) => polygon(f.pts, { fill: f.color, stroke: 'rgba(255, 255, 255, 0.75)', lineWidth: 2 }));
+          const corner = (i) => [i & 1 ? 1 : -1, i & 2 ? 1 : -1, i & 4 ? 1 : -1];
+          const edges = [];
+          for (let i = 0; i < 8; i++) {
+            for (let b = 0; b < 3; b++) {
+              const j = i ^ (1 << b);
+              if (i < j) edges.push([corner(i), corner(j)]);
+            }
+          }
+          return {
+            faces: faces.map((f) => polygon(f.pts, { fill: f.color, stroke: 'rgba(255, 255, 255, 0.75)', lineWidth: 2 })),
+            edges
+          };
         }
 
         // 12 glass discs through the vertical axis and 12 through the horizontal one,
@@ -457,15 +723,18 @@
             circle.push([Math.cos(t), Math.sin(t), 0]);
           }
           const discs = [];
+          const edges = [];
           for (const rotate of [rotY, rotX]) {
             for (let i = 0; i < sliceCount; i++) {
               const angle = (i / sliceCount) * 180;
               const pts = circle.map((p) => rotate(p, angle));
-              // Discs seen more face-on in the rest pose are a little more opaque, as before
+              // Discs seen more face-on in the rest pose are a little more opaque
               const opacity = Math.sin(angle * Math.PI / 180) * 0.3 + 0.2;
               discs.push({ pts, screen: pts.map(() => ({})), opacity });
+              for (let j = 1; j < pts.length; j++) edges.push([pts[j - 1], pts[j]]);
             }
           }
+          discs.edges = edges;
           return discs;
         }
 
@@ -533,31 +802,61 @@
           ctx.fill();
         }
 
-        // 60 hexagonal tiles on a sphere: 6 latitude rings of 10.
-        function buildHexecontahedron() {
-          const r = 0.4;
-          const hex = [[0, -r], [r, -r / 2], [r, r / 2], [0, r], [-r, r / 2], [-r, -r / 2]];
-          const place = (x, y, lon, lat) => rotY(rotX([x, y, 1], lat), lon);
-          const tiles = [];
-          for (let i = 0; i < 60; i++) {
-            const lon = (i % 10) * 36;
-            const lat = Math.floor(i / 10) * 30 - 75;
-            const hue = (i * 6) % 360;
-            tiles.push(polygon(hex.map(([x, y]) => place(x, y, lon, lat)), {
-              gradient: {
-                type: 'linear',
-                from: place(-r, -r, lon, lat),
-                to: place(r, r, lon, lat),
-                stops: [
-                  [0, `hsla(${hue}, 100%, 70%, 0.48)`],
-                  [1, `hsla(${hue + 40}, 100%, 50%, 0.48)`]
-                ]
-              },
-              stroke: 'rgba(255, 255, 255, 0.48)',
-              lineWidth: 1
-            }));
+        // Truncated icosahedron (a soccer ball): cut each corner off an icosahedron a third of
+        // the way along its edges. The cut corners become 12 pentagons, the old triangles 20 hexagons.
+        function buildBall() {
+          const RADIUS = 1.15;
+          const phi = (1 + Math.sqrt(5)) / 2;
+          const ico = [];
+          for (const a of [-1, 1]) {
+            for (const b of [-phi, phi]) ico.push([0, a, b], [a, b, 0], [b, 0, a]);
           }
-          return tiles;
+          const sub = (p, q) => [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+          const dot = (p, q) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
+          const cross = (p, q) => [p[1] * q[2] - p[2] * q[1], p[2] * q[0] - p[0] * q[2], p[0] * q[1] - p[1] * q[0]];
+          const along = (p, q, t) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t];
+          const isEdge = (i, j) => Math.abs(Math.hypot(...sub(ico[i], ico[j])) - 2) < 1e-6;
+
+          const neighbors = ico.map((_, i) => ico.map((_, j) => j).filter((j) => j !== i && isEdge(i, j)));
+          const pentagons = ico.map((v, i) => {
+            const pts = neighbors[i].map((j) => along(v, ico[j], 1 / 3));
+            // Order the five corners around the vertex they surround
+            const u = sub(pts[0], v), w = cross(v, u);
+            return pts.sort((a, b) => Math.atan2(dot(sub(a, v), w), dot(sub(a, v), u)) - Math.atan2(dot(sub(b, v), w), dot(sub(b, v), u)));
+          });
+          const hexagons = [];
+          for (let i = 0; i < 12; i++) {
+            for (const j of neighbors[i]) {
+              for (const k of neighbors[j]) {
+                if (i < j && j < k && isEdge(i, k)) {
+                  const [a, b, c] = [ico[i], ico[j], ico[k]];
+                  hexagons.push([along(a, b, 1 / 3), along(a, b, 2 / 3), along(b, c, 1 / 3), along(b, c, 2 / 3), along(c, a, 1 / 3), along(c, a, 2 / 3)]);
+                }
+              }
+            }
+          }
+
+          const scale = RADIUS / Math.hypot(...pentagons[0][0]);
+          const faces = [];
+          const edges = new Map();
+          const addFace = (pts, isPentagon) => {
+            pts = pts.map((p) => p.map((v) => v * scale));
+            const c = pts.reduce((m, p) => [m[0] + p[0], m[1] + p[1], m[2] + p[2]], [0, 0, 0]);
+            const hue = (Math.atan2(c[2], c[0]) * 180 / Math.PI + 360) % 360;
+            faces.push(polygon(pts, {
+              fill: isPentagon ? `hsla(${hue}, 85%, 38%, 0.75)` : `hsla(${hue}, 85%, 62%, 0.38)`,
+              stroke: 'rgba(255, 255, 255, 0.7)',
+              lineWidth: 1.5
+            }));
+            pts.forEach((p, n) => {
+              const q = pts[(n + 1) % pts.length];
+              const key = [p, q].map((v) => v.map((x) => x.toFixed(4)).join(',')).sort().join('|');
+              edges.set(key, [p, q]);
+            });
+          };
+          pentagons.forEach((pts) => addFace(pts, true));
+          hexagons.forEach((pts) => addFace(pts, false));
+          return { faces, edges: [...edges.values()] };
         }
 
         // A tesseract is the 4D cube: 16 vertices at (±1, ±1, ±1, ±1), 32 edges, 24 square faces.
@@ -591,29 +890,17 @@
           return { verts, edges, faces, projected: verts.map(() => ({})) };
         }
 
-        // Rotate in 4D, project 4D -> 3D (further along w = smaller), then rotate and
-        // project to 2D like every other shape. Drawn as plain white lines: edges nearer the
-        // viewer are brighter and thicker, so the structure reads without color coding.
+        // Drawn as plain white lines: edges nearer the viewer are brighter and thicker,
+        // so the structure reads without color coding.
         function drawTesseract(project, rot) {
-          const W_DISTANCE = 3.5;
-          const SCALE = 0.8;
           const { verts, edges, faces, projected } = tesseract;
-          const cxw = Math.cos(rot.xw), sxw = Math.sin(rot.xw);
-          const cyw = Math.cos(rot.yw), syw = Math.sin(rot.yw);
+          const to3D = make4DProjector(rot);
 
           for (let i = 0; i < 16; i++) {
-            let [x, y, z, w] = verts[i];
-            let t = x * cxw - w * sxw;
-            w = x * sxw + w * cxw;
-            x = t;
-            t = y * cyw - w * syw;
-            w = y * syw + w * cyw;
-            y = t;
-
-            const k = (W_DISTANCE / (W_DISTANCE - w)) * SCALE;
+            const [x, y, z, k] = to3D(verts[i]);
             const p = projected[i];
-            project(x * k, y * k, z * k, p);
-            p.scale = p.f * k / SCALE;
+            project(x, y, z, p);
+            p.scale = p.f * k / TESSERACT_SCALE;
           }
 
           // 0 at the far side of the shape, 1 at the near side
@@ -655,7 +942,7 @@
           }
         }
 
-        return { draw };
+        return { draw, morphTo };
       }
     })();
   </script>
