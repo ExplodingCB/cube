@@ -622,6 +622,7 @@
       function enterMake() {
         // With no saved shape (never made, or deleted), start from a fresh lump
         if (clayButton.hidden) renderer.clearClay();
+        else renderer.unmeltClay();
         making = true;
         renderer.setMaking(true);
         selectShape('clay');
@@ -636,6 +637,7 @@
         making = false;
         sculpt = null;
         renderer.setMaking(false);
+        renderer.meltClay();
         document.body.classList.remove('over-clay');
         try {
           localStorage.setItem(CLAY_KEY, JSON.stringify(renderer.exportClay()));
@@ -1274,18 +1276,35 @@
         }
 
 
-        // ---- Clay: a lump of beads you can mush around ----
+        // ---- Clay: a lump of beads you can mush around, then melt into one smooth shape ----
         // About 2,400 beads fill a ball. Grabbing picks every bead within BRUSH of the bead under the
         // cursor (weighted by a smooth falloff) and moves them with the mouse. Beads that end up
         // closer than MIN_GAP push each other apart, so squashed clay spreads out instead of
         // vanishing: the lump keeps its volume, and you can flatten, pinch, stretch or tear it.
+        //
+        // Fourteen of the beads are anchors (one per side and one per corner of a cube). Dragging an
+        // anchor pulls a much wider area with a soft falloff, for clean, even bulges and stretches.
+        //
+        // Melting treats every bead as a soft blob of density and traces the surface where the total
+        // density crosses ISO_FINAL (surface nets on a grid). The melt animation slides that threshold
+        // down from ISO_START, so each bead swells into a droplet and the droplets flow together.
         const BRUSH = 0.55;
+        const ANCHOR_REACH = 0.8;   // how far an anchor's pull spreads
         const SPACING = 0.12;       // distance between beads in the starting ball
         const MIN_GAP = 0.115;      // beads closer than this push apart
         const BEAD = 0.078;         // drawn bead radius
         const CLAY_LIMIT = 2.4;
         const UNDO_LIMIT = 30;
         const SHADES = 6;           // far beads are drawn darker, near ones brighter
+        const BLOB_SIGMA = 0.1;     // width of each bead's density blob
+        const ISO_START = 8.5;
+        const ISO_FINAL = 1.15;
+        const MELT_MS = 1700;
+        const UNMELT_MS = 700;
+        const WOBBLE_MS = 700;
+        const ANCHOR_DIRS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+        for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) ANCHOR_DIRS.push(normalize([x, y, z]));
+
         let clayColor = [246, 140, 118];
         let sprites = makeSprites(clayColor);
         let making = false;
@@ -1293,8 +1312,18 @@
         let stroke = null;
         let clayAnim = null;
         let settle = 0;             // frames of bead relaxation left to run
+        let level = 0;              // 0 = loose beads, 1 = melted into one smooth surface
+        let melt = null;            // { from, to, start, dur } while melting or breaking apart
+        let meltedAt = -Infinity;
+        let surface = null;         // { field, final, iso, mesh } once melted
+        let frameNow = 0;
         const undoStack = [];
         const clay = buildClay();
+
+        function normalize(v) {
+          const l = Math.hypot(v[0], v[1], v[2]) || 1;
+          return [v[0] / l, v[1] / l, v[2] / l];
+        }
 
         function buildClay() {
           // A jittered grid inside the unit ball. The jitter is seeded so "Start over" gives the same lump.
@@ -1312,26 +1341,32 @@
               }
             }
           }
+          const beads = pts.length / 3;
+          for (const d of ANCHOR_DIRS) pts.push(d[0] * 0.95, d[1] * 0.95, d[2] * 0.95);
           const count = pts.length / 3;
           const start = new Float32Array(pts);
           return {
             count,
+            beads,
             start,
             pos: start.slice(),
             sx: new Float32Array(count),
             sy: new Float32Array(count),
             sz: new Float32Array(count),
             sf: new Float32Array(count),
-            order: Array.from({ length: count }, (_, i) => i),
+            order: Array.from({ length: beads }, (_, i) => i),
+            meanZ: 0,
             drawn: false
           };
         }
 
+        const isAnchor = (i) => i >= clay.beads;
+
         // Pre-rendered bead sprites, one per depth shade, lit from the upper left like the other shapes
         function makeSprites([r, g, b]) {
           const size = 64;
-          return Array.from({ length: SHADES }, (_, level) => {
-            const k = 0.5 + 0.5 * (level + 0.5) / SHADES;
+          return Array.from({ length: SHADES }, (_, step) => {
+            const k = 0.5 + 0.5 * (step + 0.5) / SHADES;
             const tone = (f, a = 1) => `rgba(${Math.min(255, r * f) | 0}, ${Math.min(255, g * f) | 0}, ${Math.min(255, b * f) | 0}, ${a})`;
             const sprite = document.createElement('canvas');
             sprite.width = sprite.height = size;
@@ -1408,48 +1443,394 @@
           return maxMove;
         }
 
-        function drawClay(project) {
-          const { pos, count, sx, sy, sz, sf, order } = clay;
+        // ---- Melting: density field + surface nets ----
+
+        // Sum a soft Gaussian blob for every bead onto a grid around the clay
+        function buildField() {
+          const { pos, count } = clay;
+          let minx = Infinity, miny = Infinity, minz = Infinity, maxx = -Infinity, maxy = -Infinity, maxz = -Infinity;
+          for (let i = 0; i < count; i++) {
+            const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
+            if (x < minx) minx = x;
+            if (y < miny) miny = y;
+            if (z < minz) minz = z;
+            if (x > maxx) maxx = x;
+            if (y > maxy) maxy = y;
+            if (z > maxz) maxz = z;
+          }
+          const margin = 0.3;
+          minx -= margin; miny -= margin; minz -= margin;
+          maxx += margin; maxy += margin; maxz += margin;
+          const cell = Math.max(0.052, Math.max(maxx - minx, maxy - miny, maxz - minz) / 54);
+          const nx = Math.ceil((maxx - minx) / cell) + 1;
+          const ny = Math.ceil((maxy - miny) / cell) + 1;
+          const nz = Math.ceil((maxz - minz) / cell) + 1;
+          const values = new Float32Array(nx * ny * nz);
+          const reach = Math.ceil((3 * BLOB_SIGMA) / cell);
+          const k = 1 / (2 * BLOB_SIGMA * BLOB_SIGMA);
+          const span = 2 * reach + 1;
+          const ex = new Float32Array(span), ey = new Float32Array(span), ez = new Float32Array(span);
+
+          for (let p = 0; p < count; p++) {
+            const x = pos[p * 3], y = pos[p * 3 + 1], z = pos[p * 3 + 2];
+            const gi = Math.round((x - minx) / cell), gj = Math.round((y - miny) / cell), gk = Math.round((z - minz) / cell);
+            // The Gaussian splits into x, y and z factors, so precompute each axis once per bead
+            for (let o = 0; o < span; o++) {
+              const dx = minx + (gi - reach + o) * cell - x;
+              const dy = miny + (gj - reach + o) * cell - y;
+              const dz = minz + (gk - reach + o) * cell - z;
+              ex[o] = Math.exp(-dx * dx * k);
+              ey[o] = Math.exp(-dy * dy * k);
+              ez[o] = Math.exp(-dz * dz * k);
+            }
+            for (let c = 0; c < span; c++) {
+              const kk = gk - reach + c;
+              if (kk < 0 || kk >= nz) continue;
+              for (let b = 0; b < span; b++) {
+                const jj = gj - reach + b;
+                if (jj < 0 || jj >= ny) continue;
+                const eyz = ey[b] * ez[c];
+                const row = nx * (jj + ny * kk);
+                for (let a = 0; a < span; a++) {
+                  const ii = gi - reach + a;
+                  if (ii < 0 || ii >= nx) continue;
+                  values[row + ii] += ex[a] * eyz;
+                }
+              }
+            }
+          }
+          return { nx, ny, nz, minx, miny, minz, cell, values };
+        }
+
+        const CORNERS = [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0], [0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, 1]];
+        const CUBE_EDGES = [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]];
+
+        // Surface nets: one vertex per grid cell the surface passes through (the average of where it
+        // crosses the cell's edges), and one quad for every grid edge that crosses the surface.
+        function buildSurface(field, iso) {
+          const { nx, ny, nz, minx, miny, minz, cell, values } = field;
+          const cx = nx - 1, cy = ny - 1;
+          const cellIndex = new Int32Array(cx * cy * (nz - 1)).fill(-1);
+          const verts = [];
+          const corner = new Float32Array(8);
+
+          for (let k = 0; k < nz - 1; k++) {
+            for (let j = 0; j < ny - 1; j++) {
+              for (let i = 0; i < nx - 1; i++) {
+                let inside = 0;
+                for (let c = 0; c < 8; c++) {
+                  const o = CORNERS[c];
+                  corner[c] = values[(i + o[0]) + nx * ((j + o[1]) + ny * (k + o[2]))];
+                  if (corner[c] > iso) inside++;
+                }
+                if (inside === 0 || inside === 8) continue;
+                let sx = 0, sy = 0, sz = 0, n = 0;
+                for (const [a, b] of CUBE_EDGES) {
+                  const va = corner[a], vb = corner[b];
+                  if ((va > iso) === (vb > iso)) continue;
+                  const t = (iso - va) / (vb - va);
+                  const A = CORNERS[a], B = CORNERS[b];
+                  sx += A[0] + (B[0] - A[0]) * t;
+                  sy += A[1] + (B[1] - A[1]) * t;
+                  sz += A[2] + (B[2] - A[2]) * t;
+                  n++;
+                }
+                cellIndex[i + cx * (j + cy * k)] = verts.length / 3;
+                verts.push(minx + (i + sx / n) * cell, miny + (j + sy / n) * cell, minz + (k + sz / n) * cell);
+              }
+            }
+          }
+
+          // For an edge along axis A, the four cells around it span the two other axes U and V,
+          // ordered so U x V = A. Wound that way the quad faces +A; flip it when the inside is on the + side.
+          const quads = [];
+          const at = (i, j, k) => cellIndex[i + cx * (j + cy * k)];
+          const inside = (i, j, k) => values[i + nx * (j + ny * k)] > iso;
+          for (let k = 1; k < nz - 1; k++) {
+            for (let j = 1; j < ny - 1; j++) {
+              for (let i = 1; i < nx - 1; i++) {
+                const here = inside(i, j, k);
+                if (here !== inside(i + 1, j, k)) {
+                  const q = [at(i, j - 1, k - 1), at(i, j, k - 1), at(i, j, k), at(i, j - 1, k)];
+                  quads.push(...(here ? q : q.reverse()));
+                }
+                if (here !== inside(i, j + 1, k)) {
+                  const q = [at(i - 1, j, k - 1), at(i - 1, j, k), at(i, j, k), at(i, j, k - 1)];
+                  quads.push(...(here ? q : q.reverse()));
+                }
+                if (here !== inside(i, j, k + 1)) {
+                  const q = [at(i - 1, j - 1, k), at(i, j - 1, k), at(i, j, k), at(i - 1, j, k)];
+                  quads.push(...(here ? q : q.reverse()));
+                }
+              }
+            }
+          }
+
+          const count = verts.length / 3;
+          const pos = new Float32Array(verts);
+          const quadArr = new Int32Array(quads);
+
+          // Neighbor averaging takes the stair-steps out of the grid. Passes alternate between
+          // smoothing and a slight push back out (Taubin smoothing) so the shape doesn't shrink.
+          const neighbors = Array.from({ length: count }, () => []);
+          for (let q = 0; q < quadArr.length; q += 4) {
+            for (let e = 0; e < 4; e++) {
+              const a = quadArr[q + e], b = quadArr[q + ((e + 1) % 4)];
+              neighbors[a].push(b);
+              neighbors[b].push(a);
+            }
+          }
+          for (let pass = 0; pass < 6; pass++) {
+            const amount = pass % 2 ? -0.53 : 0.5;
+            const prev = pos.slice();
+            for (let v = 0; v < count; v++) {
+              const nb = neighbors[v];
+              if (!nb.length) continue;
+              let ax = 0, ay = 0, az = 0;
+              for (const u of nb) {
+                ax += prev[u * 3];
+                ay += prev[u * 3 + 1];
+                az += prev[u * 3 + 2];
+              }
+              pos[v * 3] = prev[v * 3] + (ax / nb.length - prev[v * 3]) * amount;
+              pos[v * 3 + 1] = prev[v * 3 + 1] + (ay / nb.length - prev[v * 3 + 1]) * amount;
+              pos[v * 3 + 2] = prev[v * 3 + 2] + (az / nb.length - prev[v * 3 + 2]) * amount;
+            }
+          }
+
+          const normals = new Float32Array(count * 3);
+          let mx = 0, my = 0, mz = 0;
+          for (let q = 0; q < quadArr.length; q += 4) {
+            const a = quadArr[q] * 3, b = quadArr[q + 1] * 3, c = quadArr[q + 2] * 3, d = quadArr[q + 3] * 3;
+            // Cross product of the diagonals gives the quad's facing
+            const ux = pos[c] - pos[a], uy = pos[c + 1] - pos[a + 1], uz = pos[c + 2] - pos[a + 2];
+            const vx = pos[d] - pos[b], vy = pos[d + 1] - pos[b + 1], vz = pos[d + 2] - pos[b + 2];
+            const nx_ = uy * vz - uz * vy, ny_ = uz * vx - ux * vz, nz_ = ux * vy - uy * vx;
+            for (const v of [a, b, c, d]) {
+              normals[v] += nx_;
+              normals[v + 1] += ny_;
+              normals[v + 2] += nz_;
+            }
+          }
+          for (let v = 0; v < count; v++) {
+            const p = v * 3;
+            const l = Math.hypot(normals[p], normals[p + 1], normals[p + 2]) || 1;
+            normals[p] /= l;
+            normals[p + 1] /= l;
+            normals[p + 2] /= l;
+            mx += pos[p];
+            my += pos[p + 1];
+            mz += pos[p + 2];
+          }
+          return {
+            count,
+            pos,
+            quads: quadArr,
+            normals,
+            center: count ? [mx / count, my / count, mz / count] : [0, 0, 0],
+            sx: new Float32Array(count),
+            sy: new Float32Array(count),
+            sz: new Float32Array(count),
+            shade: new Float32Array(count * 3),
+            depth: new Float32Array(quadArr.length / 4)
+          };
+        }
+
+        function meshAtIso(iso) {
+          if (!surface) return null;
+          if (Math.abs(iso - ISO_FINAL) < 1e-3) return surface.final;
+          if (surface.iso !== iso) {
+            surface.mesh = buildSurface(surface.field, iso);
+            surface.iso = iso;
+          }
+          return surface.mesh;
+        }
+
+        function currentLevel(now) {
+          if (!melt) return level;
+          const t = Math.min(1, (now - melt.start) / melt.dur);
+          const L = melt.from + (melt.to - melt.from) * easeInOut(t);
+          if (t >= 1) {
+            level = melt.to;
+            if (level === 1) meltedAt = now;
+            melt = null;
+          }
+          return L;
+        }
+
+        const CLAY_LIGHT = normalize([-0.42, -0.62, 0.66]);
+        const CLAY_HALF = normalize([CLAY_LIGHT[0], CLAY_LIGHT[1], CLAY_LIGHT[2] + 1]);
+
+        // Project and light a melted mesh, and list its front-facing quads with their depth
+        function prepareMesh(mesh, project, scale) {
+          const { pos, normals, quads, sx, sy, sz, shade, depth, count, center } = mesh;
+          const m = project.m;
           const out = {};
+          const [lx, ly, lz] = CLAY_LIGHT, [hx, hy, hz] = CLAY_HALF;
+          const [cr, cg, cb] = clayColor;
+          for (let v = 0; v < count; v++) {
+            const p = v * 3;
+            project(
+              center[0] + (pos[p] - center[0]) * scale,
+              center[1] + (pos[p + 1] - center[1]) * scale,
+              center[2] + (pos[p + 2] - center[2]) * scale,
+              out
+            );
+            sx[v] = out.x;
+            sy[v] = out.y;
+            sz[v] = out.z;
+            const n0 = normals[p], n1 = normals[p + 1], n2 = normals[p + 2];
+            const rx = m[0] * n0 + m[1] * n1 + m[2] * n2;
+            const ry = m[3] * n0 + m[4] * n1 + m[5] * n2;
+            const rz = m[6] * n0 + m[7] * n1 + m[8] * n2;
+            const diffuse = Math.max(0, rx * lx + ry * ly + rz * lz);
+            const sheen = Math.pow(Math.max(0, rx * hx + ry * hy + rz * hz), 28) * 0.35;
+            const rim = Math.pow(1 - Math.max(0, rz), 3) * 0.18;
+            const light = 0.42 + 0.62 * diffuse + rim;
+            shade[p] = cr * light + 255 * sheen;
+            shade[p + 1] = cg * light + 255 * sheen;
+            shade[p + 2] = cb * light + 255 * sheen;
+          }
+          const visible = [];
+          for (let q = 0, t = 0; q < quads.length; q += 4, t++) {
+            const a = quads[q], b = quads[q + 1], c = quads[q + 2], d = quads[q + 3];
+            const cross = (sx[c] - sx[a]) * (sy[d] - sy[b]) - (sy[c] - sy[a]) * (sx[d] - sx[b]);
+            if (cross <= 0) continue;
+            depth[t] = (sz[a] + sz[b] + sz[c] + sz[d]) / 4;
+            visible.push(t);
+          }
+          return visible;
+        }
+
+        function drawQuad(mesh, t) {
+          const { quads, sx, sy, shade } = mesh;
+          const a = quads[t * 4], b = quads[t * 4 + 1], c = quads[t * 4 + 2], d = quads[t * 4 + 3];
+          const avg = (o) => Math.min(255, (shade[a * 3 + o] + shade[b * 3 + o] + shade[c * 3 + o] + shade[d * 3 + o]) / 4) | 0;
+          const color = `rgb(${avg(0)},${avg(1)},${avg(2)})`;
+          ctx.beginPath();
+          ctx.moveTo(sx[a], sy[a]);
+          ctx.lineTo(sx[b], sy[b]);
+          ctx.lineTo(sx[c], sy[c]);
+          ctx.lineTo(sx[d], sy[d]);
+          ctx.closePath();
+          ctx.fillStyle = color;
+          ctx.fill();
+          // A hairline in the same color hides the seams between quads
+          ctx.strokeStyle = color;
+          ctx.stroke();
+        }
+
+        function drawBead(i, scale) {
+          const near = Math.max(0, Math.min(0.999, 0.5 + clay.sz[i] / (2.6 * unit)));
+          const r = BEAD * unit * clay.sf[i] * scale;
+          if (r < 0.3) return;
+          ctx.drawImage(sprites[Math.floor(near * SHADES)], clay.sx[i] - r, clay.sy[i] - r, r * 2, r * 2);
+        }
+
+        function drawClay(project) {
+          const { pos, count, sx, sy, sz, sf } = clay;
+          const out = {};
+          let zSum = 0;
           for (let i = 0; i < count; i++) {
             project(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2], out);
             sx[i] = out.x;
             sy[i] = out.y;
             sz[i] = out.z;
             sf[i] = out.f;
+            zSum += out.z;
           }
-          // Back to front, so nearer beads cover farther ones
-          order.sort((a, b) => sz[a] - sz[b]);
-          for (const i of order) {
-            const near = Math.max(0, Math.min(0.999, 0.5 + sz[i] / (2.6 * unit)));
-            const r = BEAD * unit * sf[i];
-            ctx.drawImage(sprites[Math.floor(near * SHADES)], sx[i] - r, sy[i] - r, r * 2, r * 2);
-          }
+          clay.meanZ = zSum / count;
           clay.drawn = true;
+          ctx.lineJoin = 'round';
+          ctx.lineWidth = 0.6;
+
+          const L = currentLevel(frameNow);
+
+          // Fully melted: just the smooth shape, with a little jelly wobble right after it sets
+          if (L >= 1 && surface) {
+            const since = frameNow - meltedAt;
+            const wobble = since < WOBBLE_MS ? 1 + 0.045 * Math.sin(since / 1000 * 22) * (1 - since / WOBBLE_MS) : 1;
+            const mesh = surface.final;
+            const visible = prepareMesh(mesh, project, wobble);
+            visible.sort((p, q) => mesh.depth[p] - mesh.depth[q]);
+            for (const t of visible) drawQuad(mesh, t);
+            return;
+          }
+
+          // Beads shrink as the melted surface swells around them
+          const beadScale = 1 - smoothstep(L / 0.8);
+          const mesh = L > 0 && surface ? meshAtIso(ISO_START * Math.pow(ISO_FINAL / ISO_START, L)) : null;
+          const order = clay.order;
+          if (!mesh || mesh.count === 0) {
+            order.sort((a, b) => sz[a] - sz[b]);
+            for (const i of order) drawBead(i, beadScale);
+          } else {
+            // Mid-melt: sort beads and surface quads together so they overlap correctly
+            const visible = prepareMesh(mesh, project, 1);
+            const items = order.map((i) => ({ z: sz[i], bead: i }));
+            for (const t of visible) items.push({ z: mesh.depth[t], quad: t });
+            items.sort((a, b) => a.z - b.z);
+            for (const item of items) {
+              if (item.quad !== undefined) drawQuad(mesh, item.quad);
+              else drawBead(item.bead, beadScale);
+            }
+          }
+
+          if (!making || L > 0) return;
+          drawAnchors();
 
           // Brush ring: where you'd grab, or what you're holding
-          if (!making) return;
           const at = stroke ? stroke.center : (hover ? findClayPoint(hover.x, hover.y) : -1);
           if (at < 0) return;
-          const radius = BRUSH * unit * sf[at];
+          const radius = (isAnchor(at) ? ANCHOR_REACH : BRUSH) * unit * sf[at];
           ctx.strokeStyle = stroke ? 'rgba(255, 255, 255, 0.85)' : 'rgba(255, 255, 255, 0.55)';
           ctx.lineWidth = 1.5 * lineScale;
           ctx.beginPath();
           ctx.arc(sx[at], sy[at], radius, 0, Math.PI * 2);
           ctx.stroke();
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-          ctx.beginPath();
-          ctx.arc(sx[at], sy[at], 2.5 * lineScale, 0, Math.PI * 2);
-          ctx.fill();
+          if (!isAnchor(at)) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            ctx.beginPath();
+            ctx.arc(sx[at], sy[at], 2.5 * lineScale, 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
 
-        // Page coordinates -> the frontmost bead under them, or -1
+        // Anchor handles: solid white dots, faded when they're on the far side of the clay
+        function drawAnchors() {
+          const active = stroke ? stroke.center : (hover ? findClayPoint(hover.x, hover.y) : -1);
+          for (let i = clay.beads; i < clay.count; i++) {
+            const front = clay.sz[i] >= clay.meanZ;
+            const alpha = front ? 1 : 0.35;
+            const r = (i === active ? 6.5 : 4.5) * lineScale;
+            ctx.fillStyle = `rgba(0, 0, 0, ${0.35 * alpha})`;
+            ctx.beginPath();
+            ctx.arc(clay.sx[i], clay.sy[i], r + 1.8 * lineScale, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+            ctx.beginPath();
+            ctx.arc(clay.sx[i], clay.sy[i], r, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+
+        // Page coordinates -> the anchor or frontmost bead under them, or -1
         function findClayPoint(pageX, pageY) {
-          if (shape !== 'clay' || morph || !clay.drawn) return -1;
+          if (shape !== 'clay' || morph || !clay.drawn || level !== 0 || melt) return -1;
           const x = width / 2 + (pageX - width / 2) / currentZoom;
           const y = height / 2 + (pageY - height / 2) / currentZoom;
           let best = -1, bestZ = -Infinity;
-          for (let i = 0; i < clay.count; i++) {
+          // Anchors win when the cursor is on one
+          const anchorReach = (9 * lineScale) ** 2;
+          for (let i = clay.beads; i < clay.count; i++) {
+            const dx = clay.sx[i] - x, dy = clay.sy[i] - y;
+            if (dx * dx + dy * dy < anchorReach && clay.sz[i] > bestZ) {
+              bestZ = clay.sz[i];
+              best = i;
+            }
+          }
+          if (best >= 0) return best;
+          for (let i = 0; i < clay.beads; i++) {
             const dx = clay.sx[i] - x, dy = clay.sy[i] - y;
             const reach = BEAD * unit * clay.sf[i] * 1.6;
             if (dx * dx + dy * dy < reach * reach && clay.sz[i] > bestZ) {
@@ -1470,14 +1851,22 @@
           clayAnim = null;
           const { pos, count } = clay;
           const cx = pos[center * 3], cy = pos[center * 3 + 1], cz = pos[center * 3 + 2];
+          const anchor = isAnchor(center);
           const idx = [], weight = [];
           for (let i = 0; i < count; i++) {
             const d = Math.hypot(pos[i * 3] - cx, pos[i * 3 + 1] - cy, pos[i * 3 + 2] - cz);
-            if (d < BRUSH) {
+            let w = 0;
+            if (anchor) {
+              // Wide, soft pull for clean, even shapes
+              w = i === center ? 1 : Math.exp(-((d / ANCHOR_REACH) ** 2) * 2.2);
+              if (w < 0.02) continue;
+            } else {
+              if (d >= BRUSH) continue;
               const t = 1 - (d / BRUSH) ** 2;
-              idx.push(i);
-              weight.push(t * t);
+              w = t * t;
             }
+            idx.push(i);
+            weight.push(w);
           }
           stroke = { center, idx, weight };
         }
@@ -1513,6 +1902,7 @@
 
         // Per-frame clay upkeep: run an undo/reset animation, or let squashed beads spread out
         function stepClay(now) {
+          frameNow = now;
           if (clayAnim) {
             const t = Math.min(1, (now - clayAnim.start) / 450);
             const e = easeInOut(t);
@@ -1521,7 +1911,7 @@
             if (t >= 1) clayAnim = null;
             return;
           }
-          if (settle <= 0 || shape !== 'clay') return;
+          if (settle <= 0 || shape !== 'clay' || level !== 0) return;
           const moved = Math.max(relaxClay(), relaxClay());
           // Keep relaxing while beads are still moving; then sleep until the next grab
           settle = moved > 2e-4 ? Math.max(settle - 1, 3) : settle - 1;
@@ -1530,10 +1920,15 @@
         function clayOutline() {
           const points = [];
           for (let k = 0; k < MORPH_POINTS; k++) {
-            const i = Math.floor((k * clay.count) / MORPH_POINTS) * 3;
+            const i = Math.floor((k * clay.beads) / MORPH_POINTS) * 3;
             points.push([clay.pos[i], clay.pos[i + 1], clay.pos[i + 2]]);
           }
           return points;
+        }
+
+        function prepareMelt() {
+          const field = buildField();
+          surface = { field, final: buildSurface(field, ISO_FINAL), iso: null, mesh: null };
         }
 
         const clayApi = {
@@ -1550,17 +1945,33 @@
           startSculpt,
           sculptMove,
           endSculpt,
+          // Melt the beads into one smooth shape (on Done)
+          meltClay() {
+            settle = 0;
+            clayAnim = null;
+            prepareMelt();
+            melt = { from: currentLevel(performance.now()), to: 1, start: performance.now(), dur: MELT_MS };
+          },
+          // Break a melted shape back into beads (when you open it to keep working)
+          unmeltClay() {
+            if (!surface || (level === 0 && !melt)) return;
+            melt = { from: currentLevel(performance.now()), to: 0, start: performance.now(), dur: UNMELT_MS };
+          },
           undoClay() {
-            if (undoStack.length) animateClayTo(undoStack.pop());
+            if (undoStack.length && level === 0 && !melt) animateClayTo(undoStack.pop());
           },
           // Back to a fresh lump right away, with no undo history (used when the saved shape is deleted)
           clearClay() {
             clayAnim = null;
             stroke = null;
+            melt = null;
+            level = 0;
+            surface = null;
             clay.pos.set(clay.start);
             undoStack.length = 0;
           },
           resetClay() {
+            if (level !== 0 || melt) return;
             pushUndo();
             animateClayTo(clay.start.slice());
           },
@@ -1570,14 +1981,24 @@
           },
           clayColor: () => clayColor,
           exportClay: () => ({ color: clayColor, pos: Array.from(clay.pos, (v) => Math.round(v * 1e3) / 1e3) }),
+          // Loads a saved shape already melted. Shapes saved before anchors existed get fresh anchors.
           importClay(data) {
-            if (!data || !Array.isArray(data.pos) || data.pos.length !== clay.pos.length) return false;
-            if (!data.pos.every(Number.isFinite)) return false;
-            clay.pos.set(data.pos);
+            if (!data || !Array.isArray(data.pos) || !data.pos.every(Number.isFinite)) return false;
+            if (data.pos.length === clay.beads * 3) {
+              clay.pos.set(data.pos);
+              clay.pos.set(clay.start.subarray(clay.beads * 3), clay.beads * 3);
+            } else if (data.pos.length === clay.pos.length) {
+              clay.pos.set(data.pos);
+            } else {
+              return false;
+            }
             if (Array.isArray(data.color) && data.color.length === 3) {
               clayColor = data.color.map(Number);
               sprites = makeSprites(clayColor);
             }
+            prepareMelt();
+            level = 1;
+            meltedAt = -Infinity;
             return true;
           }
         };
